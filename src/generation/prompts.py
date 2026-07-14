@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from src.generation.metadata import Article, RewritePlan
+import json
+
+from src.generation.metadata import Article, RankedClaim, RewritePlan
 from src.generation.utils import context_window
 
 
-PROMPT_VERSION = "claim-rewrite-v1"
+PROMPT_VERSION = "planning-guided-v2"
 
 SYSTEM_INSTRUCTION = (
-    "You are a controlled Bangla financial news rewriting engine. "
-    "You must only execute the provided rewrite plan."
+    "You are one component in a constrained Bangla financial misinformation "
+    "generation system. You must only realize the provided rewrite plan."
 )
 
 VARIANT_INSTRUCTIONS = (
@@ -41,4 +43,67 @@ def build_rewrite_prompt(article: Article, plan: RewritePlan, attempt: int) -> s
         "- Output the complete rewritten article, not only the sentence.\n\n"
         f"Original complete article:\n{article.text}\n\n"
         "Complete rewritten article:"
+    )
+
+
+def build_claim_extraction_prompt(article: Article, max_claims: int) -> str:
+    schema = {
+        "claims": [
+            {
+                "sentence_index": 0,
+                "sentence": "exact source sentence",
+                "claim": "short normalized factual proposition in English or Bangla",
+                "type": "numerical|policy|entity|temporal|causal",
+                "entities": ["entity"],
+                "numbers": ["number"],
+                "policies": ["policy term"],
+                "dates": ["date"],
+                "confidence": 0.0,
+            }
+        ]
+    }
+    return (
+        "Extract factual claims from this Bangla financial news article.\n"
+        "Do not summarize the article. Do not extract keywords. Convert each "
+        "claim-bearing sentence into one factual proposition record.\n"
+        f"Return at most {max_claims} claims as valid JSON only.\n\n"
+        f"JSON schema:\n{json.dumps(schema, ensure_ascii=False, indent=2)}\n\n"
+        f"Headline:\n{article.headline}\n\n"
+        f"Article:\n{article.text}\n\n"
+        "Valid JSON:"
+    )
+
+
+def build_planning_prompt(ranked_claim: RankedClaim, allowed_families: list[str]) -> str:
+    claim = ranked_claim.claim
+    schema = {
+        "family": "numerical_fact|policy_reversal|entity_replacement|temporal_shift|causal_inversion",
+        "target_span": "exact span in selected sentence",
+        "replacement": "planned replacement or concise target description",
+        "locality": "sentence",
+        "edit_instruction": "one-sentence instruction for the rewriter",
+        "expected_change": "what factual property changes",
+        "verification_constraints": {
+            "preserve_all_other_sentences": True,
+            "forbid_new_entities_outside_target": True,
+            "forbid_new_numbers_outside_target": True,
+            "forbid_new_dates_outside_target": True,
+        },
+    }
+    return (
+        "Create a structured rewrite plan for one Bangla financial claim.\n"
+        "Do not rewrite the article. Do not invent an article. Decide exactly "
+        "what factual property should change and what must remain unchanged.\n"
+        f"Allowed families: {', '.join(allowed_families)}\n"
+        "Return valid JSON only.\n\n"
+        f"Selected claim sentence index: {claim.sentence_index}\n"
+        f"Selected claim sentence: {claim.sentence}\n"
+        f"Claim type: {claim.claim_type}\n"
+        f"Entities: {claim.entities}\n"
+        f"Numbers: {claim.numbers}\n"
+        f"Policies: {claim.policies}\n"
+        f"Dates: {claim.dates}\n"
+        f"Ranking metadata: {json.dumps(ranked_claim.to_dict(), ensure_ascii=False)}\n\n"
+        f"JSON schema:\n{json.dumps(schema, ensure_ascii=False, indent=2)}\n\n"
+        "Valid JSON:"
     )

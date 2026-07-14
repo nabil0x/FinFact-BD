@@ -233,15 +233,15 @@ This document identifies, categorizes, and plans mitigation for risks specific t
 **Likelihood**: Medium
 **Impact**: High
 
-**Description**: The Bangla generation model (banglat5 or BanglaByT5) may produce rewrites that are too subtle, too generic, or grammatically incorrect. The model may not reliably rewrite only the target sentence while preserving the rest of the article.
+**Description**: Aya Expanse 8B may produce rewrites that are too subtle, too generic, grammatically weak, or insufficiently local. The model may not reliably rewrite only the target sentence while preserving the rest of the article.
 
 **Mitigation**:
-1. Start with the smaller, cleaner model (banglat5) and evaluate rewrite quality on a pilot set
-2. If quality is insufficient, escalate to a stronger instruction model
+1. Keep Qwen extraction/planning separate from Aya rewriting so the generator cannot choose its own target
+2. Run a pilot set and inspect failure modes by rewrite family
 3. Run multi-stage verification to catch low-quality rewrites
 4. Regenerate failed samples (up to 3 attempts)
 
-**Contingency**: If generation quality is consistently poor, fall back to the rule-based perturbation pipeline (already implemented and producing 20K samples).
+**Contingency**: If generation quality is consistently poor, switch the rewrite role to another constrained instruction model such as Gemma 3 12B or Qwen3-14B. Do not fall back to the rule-based perturbation pipeline as the main contribution.
 
 ---
 
@@ -284,13 +284,13 @@ This document identifies, categorizes, and plans mitigation for risks specific t
 **Likelihood**: Medium
 **Impact**: Medium
 
-**Description**: Loading a Bangla generation model on Kaggle T4 (16GB VRAM) may be constrained. The model + input processing may exceed memory or time limits.
+**Description**: Loading Qwen3-8B, Aya Expanse 8B, and verifier models on Kaggle T4 (16GB VRAM) may be constrained. The model stack may exceed memory or time limits if loaded simultaneously.
 
 **Mitigation**:
-1. Use the smaller banglat5 model first
+1. Load Qwen and Aya sequentially in 4-bit quantization
 2. Process articles in batches
-3. Use gradient checkpointing if needed
-4. Save intermediate results to avoid reprocessing
+3. Unload role models before loading verifier-heavy stages when necessary
+4. Save intermediate claim and plan checkpoints to avoid reprocessing
 
 **Contingency**: If T4 is insufficient, process in smaller batches across multiple Kaggle sessions.
 

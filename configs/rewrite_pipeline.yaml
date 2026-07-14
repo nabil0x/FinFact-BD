@@ -12,24 +12,33 @@ pipeline:
   seed: 42
 
 claim_extraction:
+  backend: "llm_json"
   min_confidence: 0.35
   min_sentence_chars: 18
   max_sentences: 80
+  max_claims: 12
+  max_new_tokens: 1536
+  temperature: 0.0
+  seed: 42
 
 claim_ranking:
   min_overall_score: 0.52
   max_risk_score: 0.72
 
 planner:
+  backend: "llm_json"
   allowed_families:
     - numerical_fact
     - policy_reversal
     - entity_replacement
     - temporal_shift
     - causal_inversion
+  max_new_tokens: 768
+  temperature: 0.0
+  seed: 43
 
 generation:
-  max_new_tokens: 768
+  max_new_tokens: 1024
   temperature: 0.4
 
 regeneration:
@@ -44,18 +53,32 @@ verification:
 
 models:
   device: "cuda"
-  generator:
-    backend: "hf_seq2seq"
-    model_name: "csebuetnlp/banglat5"
+  extractor:
+    enabled: true
+    backend: "hf_causal_lm"
+    model_name: "Qwen/Qwen3-8B"
     revision: "main"
+    load_in_4bit: true
+    use_chat_template: true
+  planner:
+    enabled: true
+    share_with: "extractor"
+  generator:
+    backend: "hf_causal_lm"
+    model_name: "CohereLabs/aya-expanse-8b"
+    revision: "main"
+    load_in_4bit: true
+    use_chat_template: true
   embedding:
-    model_name: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    model_name: "intfloat/multilingual-e5-large"
   nli:
     model_name: "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
     revision: "main"
   fluency:
-    model_name: "sagorsarker/bangla-gpt2"
+    backend: "hf_masked_lm"
+    model_name: "csebuetnlp/banglabert"
     revision: "main"
+    max_masked_tokens: 96
 
 human_validation:
   enabled: true

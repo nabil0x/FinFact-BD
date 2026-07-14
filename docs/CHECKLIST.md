@@ -16,7 +16,7 @@ Generate controlled Bangla rewrites using planning-guided claim generation inste
 - [ ] Implement claim extraction (split articles into sentences, identify candidate propositions)
 - [ ] Implement claim selection scoring (importance_score, editability_score, diversity_bonus)
 - [ ] Implement claim planning (structured metadata: sample_id, rewrite_family, target_sentence_index, target_span, desired_change, difficulty)
-- [ ] Load Bangla generation model (csebuetnlp/banglat5 or Vacaspati/BanglaByT5)
+- [ ] Load role-specific models (Qwen extraction/planning, Aya rewriting, e5 similarity, mDeBERTa NLI, BanglaBERT language quality)
 - [ ] Generate rewrites (target sentence/paragraph only, not full article)
 - [ ] Run multi-stage verification:
   - [ ] Stage 1: Claim integrity (did intended claim change? any extra changes? span-locality)

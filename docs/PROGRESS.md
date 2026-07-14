@@ -14,7 +14,7 @@ FinFact-BD started as a dataset generation project for Bengali financial misinfo
 
 Frozen release: `FinFact-BD-v1.0` regenerated on `2026-07-14`.
 
-**What changed:** We shifted from "generate a dataset and train a classifier" to "build a benchmark that the community can use." This means human validation, difficulty calibration, reasoning labels, real-world examples, and deep error analysis. The generation side moved from rule-based token replacement to planning-guided Bangla claim rewriting using generation models (csebuetnlp/banglat5, Vacaspati/BanglaByT5). The benchmark construction is where we are now.
+**What changed:** We shifted from "generate a dataset and train a classifier" to "build a benchmark that the community can use." This means human validation, difficulty calibration, reasoning labels, real-world examples, and deep error analysis. The generation side moved from rule-based token replacement to planning-guided Bangla claim rewriting using role-specific models: Qwen3-8B for extraction/planning, Aya Expanse 8B for rewriting, multilingual-e5-large for similarity, mDeBERTa-XNLI for contradiction, and BanglaBERT for language quality. The benchmark construction is where we are now.
 
 **Why this matters:** A dataset without validation is just noise. A benchmark with research questions, human labels, and real-world coverage is a lasting contribution.
 
@@ -67,7 +67,7 @@ FinFact-BD carries rich metadata per sample. This schema supports every downstre
   "diversity_bonus": 0.15,
   "expected_scope": "sentence",
   "expected_changed_claim": "Revenue growth expectation changed from positive to negative",
-  "generation_model": "csebuetnlp/banglat5",
+  "generation_model": "CohereLabs/aya-expanse-8b",
   "regeneration_attempts": 1,
   "verification_result": {
     "claim_integrity": 0.9,
@@ -109,7 +109,7 @@ FinFact-BD carries rich metadata per sample. This schema supports every downstre
 
 ### v2: Planning-Guided Bangla Claim Rewriting (Planned)
 
-The v1 rule-based pipeline produced symbolic edits that were often too small to be human-legible in long Bengali financial articles. The v2 pipeline replaces token-level perturbation with planning-guided claim rewriting using Bangla generation models. The full plan is documented in `docs/KAGGLE_REWRITE_PLAN.md`.
+The v1 rule-based pipeline produced symbolic edits that were often too small to be human-legible in long Bengali financial articles. The v2 pipeline replaces token-level perturbation with planning-guided claim rewriting using separate reasoning, generation, and verification models. The full plan is documented in `docs/KAGGLE_REWRITE_PLAN.md`.
 
 **Pipeline stages:**
 
@@ -117,9 +117,10 @@ The v1 rule-based pipeline produced symbolic edits that were often too small to 
 2. **Claim extraction**: Identify candidate propositions (numeric, policy, entity, temporal, causal claims)
 3. **Claim selection**: Score and select claims using importance_score, editability_score, diversity_bonus
 4. **Claim planning**: Build structured rewrite plan per sample
-5. **Controlled rewriting**: Use Bangla generation model to realize the change
-   - Primary: `csebuetnlp/banglat5`
-   - Fallback: `Vacaspati/BanglaByT5`
+5. **Controlled rewriting**: Use Aya Expanse 8B to realize the planned local change
+   - Extraction/planning: `Qwen/Qwen3-8B`
+   - Rewriting: `CohereLabs/aya-expanse-8b`
+   - Verification: `intfloat/multilingual-e5-large`, `mDeBERTa-XNLI`, `csebuetnlp/banglabert`, deterministic checks
 6. **Multi-stage verification**: Three-stage quality gate
    - Stage 1: Claim integrity (did the intended claim change? any extras?)
    - Stage 2: Surface quality (fluent Bangla, journalistic style)
@@ -205,11 +206,14 @@ Final filtered dataset
 
 ### Key Files
 
-**v2 Pipeline (Claim-Guided Rewriting):**
+**v2 Pipeline (Planning-Guided Rewriting):**
 - `docs/KAGGLE_REWRITE_PLAN.md` — Full pipeline design document
-- Kaggle notebook (planned) — New generation pipeline using Bangla models
-- `csebuetnlp/banglat5` — Primary Bangla generation model
-- `Vacaspati/BanglaByT5` — Fallback Bangla generation model
+- `scripts/run_rewrite_pipeline.py` — Active rewrite pipeline entry point
+- `Qwen/Qwen3-8B` — Claim extraction and rewrite planning
+- `CohereLabs/aya-expanse-8b` — Controlled local Bangla rewrite model
+- `intfloat/multilingual-e5-large` — Semantic similarity verifier
+- `MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7` — NLI contradiction verifier
+- `csebuetnlp/banglabert` — Bangla masked-LM language-quality verifier
 
 **v1 Pipeline (Rule-Based — kept for reference):**
 - `src/generation/perturbation_pipeline.py` — Old rule-based generation script (563 lines)
@@ -230,12 +234,11 @@ Final filtered dataset
 | Download filtered results | ⏳ Waiting | `finfact_bd_perturbed_filtered.csv` |
 | Rebalance dataset | ⏳ Waiting | `rebalance_dataset.py` ready |
 
-### mDeBERTa-Only Approach (Active Pipeline)
+### Multi-Model Verification Approach (Active Pipeline)
 
-**Model:** `MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7` (280M params)
-**Method:** Single-model contradiction probability for (original, perturbed) pairs
-**Threshold:** mDeBERTa contradiction probability ≥ 0.4 → keep, else discard
-**Why mDeBERTa-only:** No fine-tuning required, ready-to-use, sufficient accuracy (~75-80% cross-lingual transfer to Bengali). The dual-model ensemble (mDeBERTa + BanglaBERT fine-tuned) was tested and found unnecessary.
+**Models:** multilingual-e5-large for similarity, mDeBERTa-XNLI for contradiction, BanglaBERT for language quality, plus deterministic locality and hallucination checks.
+**Method:** Accept a rewrite only if the intended claim changes, unrelated claims remain stable, article similarity remains high, NLI supports the planned contradiction, language quality is acceptable, and no unplanned entities/numbers/dates appear outside the target sentence.
+**Why multi-model:** The generator should not verify itself. Independent verification makes failures diagnosable and keeps acceptance separate from generation.
 
 ### Historical Context
 The original approach used a dual-model ensemble (weight 0.6 mDeBERTa + 0.4 BanglaBERT fine-tuned) to combine multilingual and Bengali-native NLI signals. After evaluation, the BanglaBERT fine-tuning step was unnecessary. The ensemble scripts (`dual_model_judge.py`, `dual_model_filter.py`) remain in the repository for reference.
@@ -482,13 +485,13 @@ papers/IDEA_3_FinFact_BD/
 ├── src/
 │   ├── config.py                      ✅ YAML config loader
 │   ├── generation/
-│   │   ├── perturbation_pipeline.py   ✅ Main generation (563 lines)
-│   │   └── extract_originals.py       ✅ BENI v2 extraction
+│   │   ├── pipeline.py                ✅ Planning-guided orchestration
+│   │   ├── claim_extraction.py        ✅ Heuristic or Qwen JSON extraction
+│   │   ├── perturbation_planner.py    ✅ Heuristic or Qwen JSON planning
+│   │   ├── rewrite_generator.py       ✅ Aya constrained local rewrite
+│   │   └── verifier.py                ✅ e5/mDeBERTa/BanglaBERT + deterministic checks
 │   ├── validation/
-│   │   ├── rule_based_filter.py       ✅ Rule-based filter (99.8% pass)
-│   │   ├── mdeberta_filter.py         ✅ Active: mDeBERTa-only quality filter
-│   │   ├── finetune_banglabert.py     ✅ Archived: BanglaBERT fine-tuning
-│   │   ├── dual_model_judge.py        ✅ Archived: ensemble scoring
+│   │   ├── legacy filters             ✅ Archived under legacy/rule_based_pipeline/
 │   │   ├── human_validation_protocol.py  ⏳ TODO (Phase 3)
 │   │   └── rebalance_dataset.py       ✅ Ready
 │   ├── benchmark/
@@ -562,7 +565,7 @@ This project evolved through several phases. The original vision was a dataset g
 2. **Quality filtering:** Simplified from dual-model ensemble to mDeBERTa-only after testing showed unnecessary complexity
 3. **Benchmark pivot:** Shifted from "dataset announcement" to "rigorous benchmark" after recognizing that human validation and real-world testing are essential for lasting contribution
 4. **Venue change:** Targeting FinNLP Workshop at COLING 2026 (January 2027) instead of standalone paper
-5. **Generation approach shift:** Moved from rule-based token replacement to planning-guided Bangla claim rewriting using generation models (csebuetnlp/banglat5, Vacaspati/BanglaByT5). The symbolic edits in v1 were controlled and reproducible, but many were too small to be human-legible in long Bengali financial articles. The new approach keeps the claim-level control but constrains a generation model to realize a pre-specified change at sentence/paragraph level, making the misinformation more visible to human readers while remaining verifiable against the rewrite plan.
+5. **Generation approach shift:** Moved from rule-based token replacement to planning-guided Bangla claim rewriting using role-specific models. The symbolic edits in v1 were controlled and reproducible, but many were too small to be human-legible in long Bengali financial articles. The new approach keeps the claim-level control, uses Qwen for structured extraction/planning, constrains Aya to realize a pre-specified local change, and verifies independently before acceptance.
 
 The original approach (dataset + dual-model filter + train classifier) would have produced a weaker paper. The benchmark approach (human validation + real-world testing + error analysis) produces a stronger contribution.
 

@@ -77,6 +77,25 @@ src/generation/
   pipeline.py              End-to-end orchestration and checkpointing
 ```
 
+## Model Roles
+
+The pipeline deliberately uses different models for different cognitive roles.
+No model is asked to extract, plan, generate, and verify at the same time.
+
+| Role | Default model | Responsibility |
+|------|---------------|----------------|
+| Claim extraction | `Qwen/Qwen3-8B` | Convert Bangla article sentences into structured factual claim JSON |
+| Rewrite planning | `Qwen/Qwen3-8B` | Decide the target span, perturbation family, intended change, and constraints |
+| Controlled rewrite | `CohereLabs/aya-expanse-8b` | Rewrite the planned local claim in fluent Bangla |
+| Semantic similarity | `intfloat/multilingual-e5-large` | Check that the article remains globally close to the source |
+| Contradiction | `MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7` | Check claim-level contradiction / intended change |
+| Language quality | `csebuetnlp/banglabert` | Masked-LM fluency signal for Bangla language quality |
+| Locality and hallucination | deterministic checks | Detect sentence drift and unplanned entities, numbers, dates, and organizations |
+
+Qwen is used for structured reasoning, Aya is used for Bangla realization, and
+the verifier stack is independent from the generator. This separation is a core
+methodological constraint, not an implementation detail.
+
 ## Rewrite Families
 
 - `numerical_fact`
@@ -92,9 +111,9 @@ details:
 
 - intended change
 - locality
-- Sentence-BERT semantic similarity
-- NLI contradiction
-- LM fluency/perplexity
+- multilingual-e5 semantic similarity
+- mDeBERTa-XNLI contradiction
+- BanglaBERT masked-LM language quality / fluency
 - journalistic style
 - hallucination/new-fact detection
 - corpus-level embedding duplicate detection
@@ -120,9 +139,9 @@ python scripts/run_rewrite_pipeline.py \
   --num-samples 100
 ```
 
-The production config uses Hugging Face models for generation, embeddings, NLI,
-and fluency. Tests inject lightweight fake models so unit tests do not require a
-GPU or model downloads.
+The production config uses Hugging Face models for extraction, planning,
+generation, embeddings, NLI, and language-quality verification. Tests inject
+lightweight fake models so unit tests do not require a GPU or model downloads.
 
 Run tests:
 

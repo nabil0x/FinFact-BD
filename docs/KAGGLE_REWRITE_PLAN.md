@@ -14,12 +14,18 @@ This is a controlled semantic editing pipeline, not free-form generation. The pl
 
 ## Recommended model path
 
-Start with a small seq2seq Bangla generator on Kaggle:
+Use separate models for separate roles:
 
-- `csebuetnlp/banglat5`
-- `Vacaspati/BanglaByT5`
+| Role | Model |
+|------|-------|
+| Claim extraction | `Qwen/Qwen3-8B` |
+| Rewrite planning | `Qwen/Qwen3-8B` |
+| Controlled local rewrite | `CohereLabs/aya-expanse-8b` |
+| Semantic similarity | `intfloat/multilingual-e5-large` |
+| Contradiction | `MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7` |
+| Bangla language quality | `csebuetnlp/banglabert` |
 
-Use the smaller, cleaner model first. If the rewrite quality is too subtle or too generic, move to a stronger instruction model later, but keep it constrained to the selected claim and rewrite plan. The generation model is for planned local realization only, not for choosing misinformation or inventing articles.
+Run the 8B models sequentially in 4-bit quantization on Kaggle. Qwen performs structured reasoning only; Aya performs Bangla realization only. The generation model is for planned local realization, not for choosing misinformation or inventing articles.
 
 ## Kaggle notebook stages
 
@@ -83,7 +89,7 @@ Use the smaller, cleaner model first. If the rewrite quality is too subtle or to
   - surrounding context
   - topic
   - overall length as much as possible
-- Keep the rewriter separate from the planner, even if both stages use the same base model.
+- Keep the rewriter separate from the planner.
 - Do not let the model choose the target claim, perturbation family, or factual change.
 
 ### 6. Multi-stage verification

@@ -12,7 +12,7 @@ FinFact-BD is the first benchmark that pairs planning-guided Bangla claim rewrit
 
 The dataset draws from BENI v2, a corpus of Bengali economy articles, and applies five fact-aware rewriting families (numerical fact change, policy reversal, entity replacement, temporal shift, causal inversion) to create labeled real/fake pairs. Each rewriting family targets a distinct financial proposition type, making the benchmark useful for diagnosing model weaknesses, not just measuring accuracy.
 
-The generation approach uses a planning-guided claim rewriting pipeline: claims are extracted from source articles, scored for suitability, converted into explicit perturbation plans, realized by a constrained Bangla generation model (csebuetnlp/banglat5 or Vacaspati/BanglaByT5), and accepted only after independent verification. The novelty lies in the controlled system around the generator, not in the generator itself.
+The generation approach uses a planning-guided claim rewriting pipeline: claims are extracted from source articles, scored for suitability, converted into explicit perturbation plans, realized by a constrained multilingual generation model, and accepted only after independent verification. The novelty lies in the controlled system around the generator, not in the generator itself. The implementation uses separate model roles: Qwen3-8B for structured extraction and planning, Aya Expanse 8B for local Bangla rewrite realization, multilingual-e5-large for similarity, mDeBERTa-XNLI for contradiction, and BanglaBERT for language-quality verification.
 
 ### 2. Human Validation
 
@@ -42,7 +42,7 @@ Most benchmark papers report aggregate metrics. The failure-mode decomposition i
 
 FinFact-BD uses a multi-stage controlled generation pipeline, not free-form generation or token-level rule replacement. The pipeline is: claim extraction, claim selection, rewrite planning, constrained Bangla generation, independent verification, acceptance, and regeneration when needed. Each stage has a defined role.
 
-The planner decides what change should happen. The generation model (csebuetnlp/banglat5 or Vacaspati/BanglaByT5) is constrained to realize that change by rewriting only the target sentence or paragraph, never the full article. The verifier then decides whether the output is accepted, using criteria across three dimensions: claim integrity (did the intended claim change, and only that claim?), surface quality (is the Bangla fluent and journalistic?), and semantic quality (is the rewrite a believable financial news item that contradicts the original where intended?).
+The planner decides what change should happen. The generation model (Aya Expanse 8B by default) is constrained to realize that change by rewriting only the target sentence or paragraph, never the full article. The verifier then decides whether the output is accepted, using criteria across three dimensions: claim integrity (did the intended claim change, and only that claim?), surface quality (is the Bangla fluent and journalistic?), and semantic quality (is the rewrite a believable financial news item that contradicts the original where intended?).
 
 This is not free-form generation. It is a controlled, auditable process where every accepted sample has a traceable provenance: the source claim, the selection score, the rewrite plan, the generator model, the verification result, and the number of regeneration attempts. The pipeline constrains the generator at every step, producing targeted misinformation for benchmark construction rather than arbitrary text. The model never has the final say; independent verification governs acceptance.
 
@@ -70,7 +70,7 @@ Systematic model evaluation across architectures is standard practice in benchma
 
 ### Bangla Generation Models Exist
 
-The Bangla generation model itself is not novel. csebuetnlp/banglat5 and Vacaspati/BanglaByT5 are existing pretrained models. The novelty is in how we constrain and verify their output within a planning pipeline. Using an off-the-shelf generator inside a controlled, auditable system is a different contribution than the generator itself.
+The Bangla generation model itself is not novel. Aya Expanse 8B, Qwen3-8B, multilingual-e5-large, mDeBERTa-XNLI, and BanglaBERT are existing pretrained models. The novelty is in how we assign them single responsibilities and constrain the generator's output within a planning and verification pipeline. Using off-the-shelf models inside a controlled, auditable system is a different contribution than the models themselves.
 
 ---
 

@@ -30,6 +30,8 @@ class Claim:
     policies: List[str]
     dates: List[str]
     confidence: float
+    claim_text: str = ""
+    extractor_model: str = "heuristic"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -63,6 +65,9 @@ class RewritePlan:
     edit_scope: str
     expected_change: str
     verification_constraints: Dict[str, Any]
+    target_span: str = ""
+    replacement: str = ""
+    planner_model: str = "heuristic"
 
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)

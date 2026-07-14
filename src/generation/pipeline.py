@@ -12,7 +12,7 @@ from src.generation.claim_selection import ClaimRanker, build_claim_ranker
 from src.generation.exporter import DatasetExporter, HumanValidationWorkbookBuilder
 from src.generation.metadata import Article, SampleRecord
 from src.generation.models import ModelBundle, build_model_bundle
-from src.generation.perturbation_planner import PerturbationPlanner, build_planner
+from src.generation.perturbation_planner import RewritePlanner, build_planner
 from src.generation.regeneration import RegenerationConfig, RegenerationController
 from src.generation.rewrite_generator import RewriteGenerator
 from src.generation.utils import read_json, stable_sample_id, utc_timestamp, write_json
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class PipelineComponents:
     extractor: ClaimExtractor
     ranker: ClaimRanker
-    planner: PerturbationPlanner
+    planner: RewritePlanner
     regenerator: RegenerationController
 
 
@@ -104,9 +104,9 @@ class PlanningGuidedRewritePipeline:
             temperature_step=float(self.config.get("regeneration", {}).get("temperature_step", 0.15)),
         )
         return PipelineComponents(
-            extractor=build_claim_extractor(self.config.get("claim_extraction", {})),
+            extractor=build_claim_extractor(self.config.get("claim_extraction", {}), model=models.extractor),
             ranker=build_claim_ranker(self.config.get("claim_ranking", {})),
-            planner=build_planner(self.config.get("planner", {})),
+            planner=build_planner(self.config.get("planner", {}), model=models.planner),
             regenerator=RegenerationController(generator, verifier, regen_cfg),
         )
 

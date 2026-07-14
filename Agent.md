@@ -114,6 +114,26 @@ python scripts/run_rewrite_pipeline.py \
 
 ---
 
+## Model Role Allocation
+
+Use separate models for separate cognitive roles. Do not collapse extraction,
+planning, generation, and verification into a single model call.
+
+| Role | Default model | Rule |
+|------|---------------|------|
+| Claim extraction | `Qwen/Qwen3-8B` | Produce structured claim JSON only |
+| Rewrite planning | `Qwen/Qwen3-8B` | Produce a rewrite plan only; never rewrite text |
+| Controlled rewrite | `CohereLabs/aya-expanse-8b` | Realize the planned local edit in Bangla |
+| Semantic similarity | `intfloat/multilingual-e5-large` | Compare original and rewritten articles |
+| Contradiction | `MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7` | Verify original and rewritten target claims |
+| Language quality | `csebuetnlp/banglabert` | Provide masked-LM Bangla language-quality signal |
+| Locality/hallucination | deterministic checks | Enforce changed sentence count and unplanned-new-fact rejection |
+
+The generator must never be reused as the verifier. Verification must remain
+independent from generation.
+
+---
+
 ## Pipeline Contracts
 
 ### 1. Claim Extraction
@@ -130,12 +150,14 @@ Output:
 Claim(
     sentence_index,
     sentence,
+    claim_text,
     claim_type,
     entities,
     numbers,
     policies,
     dates,
     confidence,
+    extractor_model,
 )
 ```
 
@@ -177,6 +199,9 @@ RewritePlan(
     edit_scope,
     expected_change,
     verification_constraints,
+    target_span,
+    replacement,
+    planner_model,
 )
 ```
 

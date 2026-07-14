@@ -1,6 +1,6 @@
 """Planning-guided Bangla financial misinformation rewriting."""
 
-from src.generation.claim_extraction import ClaimExtractor, HeuristicClaimExtractor, build_claim_extractor
+from src.generation.claim_extraction import ClaimExtractor, HeuristicClaimExtractor, LLMClaimExtractor, build_claim_extractor
 from src.generation.claim_selection import ClaimRanker, RankedClaim, build_claim_ranker
 from src.generation.exporter import DatasetExporter, HumanValidationWorkbookBuilder
 from src.generation.metadata import (
@@ -17,11 +17,13 @@ from src.generation.models import (
     EmbeddingModel,
     FluencyModel,
     GenerationModel,
+    HuggingFaceCausalLMGenerator,
+    InstructionModel,
     ModelBundle,
     NLIModel,
     build_model_bundle,
 )
-from src.generation.perturbation_planner import PerturbationPlanner, build_planner
+from src.generation.perturbation_planner import LLMPerturbationPlanner, PerturbationPlanner, RewritePlanner, build_planner
 from src.generation.pipeline import PipelineRunResult, PlanningGuidedRewritePipeline
 from src.generation.regeneration import RegenerationController, RegenerationResult
 from src.generation.rewrite_generator import RewriteGenerator
@@ -40,7 +42,11 @@ __all__ = [
     "GenerationModel",
     "GenerationParams",
     "HeuristicClaimExtractor",
+    "HuggingFaceCausalLMGenerator",
     "HumanValidationWorkbookBuilder",
+    "InstructionModel",
+    "LLMClaimExtractor",
+    "LLMPerturbationPlanner",
     "ModelBundle",
     "NLIModel",
     "PerturbationPlanner",
@@ -51,6 +57,7 @@ __all__ = [
     "RegenerationResult",
     "RewriteGenerator",
     "RewritePlan",
+    "RewritePlanner",
     "SampleRecord",
     "VerificationReport",
     "VerifierResult",

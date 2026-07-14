@@ -12,7 +12,7 @@ For a paper-ready summary of the closest related work, see [docs/RELATED_WORK.md
 
 **The question:** Can controlled claim rewriting with Bangla generation models produce realistic Bengali financial misinformation that is both human-legible and benchmark-quality?
 
-**What we know:** Bangla generation models like `csebuetnlp/banglat5` and `Vacaspati/BanglaByT5` exist for seq2seq tasks. Controlled rewriting methodology exists in English for benchmark construction. But nobody has combined claim-level planning with constrained Bangla generation to produce financial misinformation samples that are both human-legible and suitable for benchmark evaluation.
+**What we know:** Multilingual instruction and generation models such as Qwen3-8B and Aya Expanse 8B can support Bangla workflows. Controlled rewriting methodology exists in English for benchmark construction. But nobody has combined claim-level planning with constrained Bangla generation to produce financial misinformation samples that are both human-legible and suitable for benchmark evaluation.
 
 **Why it matters:** If multilingual models fail here, it suggests language-specific pretraining or fine-tuning is necessary. If they succeed, it opens the door to zero-shot cross-lingual transfer from English financial NLP.
 
@@ -113,7 +113,7 @@ These are specific, documented gaps in the literature. Each is a research questi
 | Financial domain-specific difficulty analysis in Bengali | General Bengali NLP benchmarks | No study measures whether financial terminology creates a difficulty spike |
 | Numerical misinformation comparison across model scales | LLM evaluation in English | No comparison of LLM vs. PLM on Bengali numerical reasoning |
 | Reasoning skill decomposition for Bengali financial misinformation | English reasoning benchmarks | No analysis of which reasoning skills are weakest in Bengali |
-| Controlled generation for Bengali financial misinformation | Bangla generation models exist (banglat5, BanglaByT5); controlled rewriting methodology exists in English | No study uses Bangla generation models within a planning+verification pipeline for benchmark construction |
+| Controlled generation for Bengali financial misinformation | Multilingual generators exist; controlled rewriting methodology exists in English | No study uses role-specific extraction, planning, generation, and verification models for Bengali financial misinformation benchmark construction |
 
 **Note:** MFMDQwen claims Bengali coverage, but it does not provide:
 - Bangladesh-specific financial manipulation types (DSE, bKash, Nagad)
@@ -132,7 +132,7 @@ FinFact-BD is designed as a controlled experimental setup, not just a dataset re
 
 | Research Question | Experimental Component | What We Evaluate |
 |-------------------|----------------------|------------------|
-| RQ1: Generation model quality | Evaluate planning-guided Bangla claim rewriting with banglat5, BanglaByT5 | Human-legibility, benchmark quality, verification pass rate |
+| RQ1: Generation model quality | Evaluate planning-guided Bangla claim rewriting with Qwen3-8B, Aya Expanse 8B, multilingual-e5, mDeBERTa-XNLI, and BanglaBERT | Human-legibility, benchmark quality, verification pass rate |
 | RQ2: Hardest claim-rewriting families | Stratified evaluation across 5 claim-rewriting families | Per-family F1 scores, difficulty ranking |
 | RQ3: Financial terminology difficulty | Compare performance on financial vs. general Bengali text | Accuracy gap, error analysis |
 | RQ4: Numerical misinformation across scales | Compare PLMs (110M-395M) vs. LLMs (7B-8B) on numerical fact-change examples | Numerical accuracy, scale vs. performance |

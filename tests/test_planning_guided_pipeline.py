@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from src.generation.claim_extraction import HeuristicClaimExtractor
+from src.generation.claim_extraction import HeuristicClaimExtractor, build_claim_extractor
 from src.generation.claim_selection import ClaimRanker, ClaimRankingConfig
 from src.generation.exporter import HumanValidationWorkbookBuilder
 from src.generation.metadata import Article, SampleRecord
@@ -49,6 +49,17 @@ class FakeFluency:
         return 35.0
 
 
+class FakeInstructionModel:
+    model_name = "fake-qwen"
+    model_revision = "test"
+
+    def __init__(self, response):
+        self.response = response
+
+    def generate_text(self, prompt, temperature, seed, max_new_tokens):
+        return self.response
+
+
 def fake_bundle() -> ModelBundle:
     return ModelBundle(FakeGenerator(), FakeEmbedder(), FakeNLI(), FakeFluency())
 
@@ -84,6 +95,71 @@ def test_ranker_and_planner_create_structured_plan():
     assert plan.target_claim.sentence_index == 0
     assert plan.edit_scope == "target_sentence"
     assert plan.verification_constraints["preserve_all_other_sentences"] is True
+
+
+def test_llm_claim_extractor_parses_structured_json():
+    article = Article(
+        article_id="a1",
+        headline="রিজার্ভ বেড়েছে",
+        text="বাংলাদেশ ব্যাংকের রিজার্ভ ২৭.০৪ বিলিয়ন ডলারে পৌঁছেছে।",
+    )
+    model = FakeInstructionModel(
+        """
+        {
+          "claims": [
+            {
+              "sentence_index": 0,
+              "sentence": "বাংলাদেশ ব্যাংকের রিজার্ভ ২৭.০৪ বিলিয়ন ডলারে পৌঁছেছে।",
+              "claim": "Bangladesh Bank reserve reached 27.04B USD",
+              "type": "numeric",
+              "entities": ["বাংলাদেশ ব্যাংক"],
+              "numbers": ["২৭.০৪"],
+              "policies": [],
+              "dates": [],
+              "confidence": 0.91
+            }
+          ]
+        }
+        """
+    )
+
+    claims = build_claim_extractor({"backend": "llm_json", "min_confidence": 0.1}, model=model).extract(article)
+
+    assert len(claims) == 1
+    assert claims[0].claim_type == "numerical"
+    assert claims[0].claim_text == "Bangladesh Bank reserve reached 27.04B USD"
+    assert claims[0].extractor_model == "fake-qwen"
+
+
+def test_llm_planner_parses_structured_json():
+    article = Article(
+        article_id="a1",
+        headline="বাংলাদেশ ব্যাংক সুদের হার বাড়িয়েছে",
+        text="বাংলাদেশ ব্যাংক নীতিগত সুদের হার ১০ শতাংশ বাড়িয়েছে।",
+    )
+    claims = HeuristicClaimExtractor().extract(article)
+    selected = ClaimRanker(ClaimRankingConfig(min_overall_score=0.1, max_risk_score=1.0)).select(article, claims)
+    assert selected is not None
+    model = FakeInstructionModel(
+        """
+        {
+          "family": "numerical_fact",
+          "target_span": "১০ শতাংশ",
+          "replacement": "৭ শতাংশ",
+          "locality": "target_sentence",
+          "edit_instruction": "Change only the selected interest-rate number to ৭ শতাংশ.",
+          "expected_change": "The reported interest rate changes from ১০ শতাংশ to ৭ শতাংশ.",
+          "verification_constraints": {"preserve_all_other_sentences": true}
+        }
+        """
+    )
+
+    plan = build_planner({"backend": "llm_json", "allowed_families": ["numerical_fact"]}, model=model).create_plan(selected)
+
+    assert plan.family == "numerical_fact"
+    assert plan.target_span == "১০ শতাংশ"
+    assert plan.replacement == "৭ শতাংশ"
+    assert plan.planner_model == "fake-qwen"
 
 
 def test_pipeline_runs_end_to_end_with_injected_models(tmp_path):

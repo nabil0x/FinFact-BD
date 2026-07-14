@@ -26,14 +26,14 @@ Twelve weeks from quality filtering to FinNLP Workshop submission. Each week map
 
 ## Phase 1: Quality Filtering & Planning-Guided Rewriting (Week 1)
 
-Run the planning-guided Bangla rewriting pipeline on Kaggle, then apply mDeBERTa filtering as a downstream quality gate. The generation pipeline now includes built-in multi-stage verification (claim integrity, surface quality, semantic quality), so mDeBERTa filtering acts as an additional safety net rather than the sole quality control step. The generation model (csebuetnlp/banglat5 or Vacaspati/BanglaByT5) rewrites targeted claims under planner control, producing misinformation that is more human-legible than microscopic token replacements.
+Run the planning-guided Bangla rewriting pipeline on Kaggle with role-specific models: Qwen3-8B for extraction/planning, Aya Expanse 8B for controlled rewriting, multilingual-e5-large for similarity, mDeBERTa-XNLI for contradiction, and BanglaBERT for language quality. The generation pipeline includes built-in multi-stage verification, so mDeBERTa acts as one verifier rather than the sole quality gate.
 
 ### Tasks
 
 | Task | Details |
 |------|---------|
 | Implement claim extraction & selection on Kaggle | Extract financial propositions, score by centrality/importance/editability/diversity |
-| Load Bangla generation model on Kaggle T4 | Load csebuetnlp/banglat5 or Vacaspati/BanglaByT5 (~10-15 min generation pass) |
+| Load role-specific models on Kaggle T4 | Load Qwen and Aya sequentially in 4-bit plus verifier models |
 | Generate planning-guided rewrites | Rewrite targeted claims under planner control, one factual change per sample |
 | Run multi-stage verification | Claim integrity, surface quality, semantic quality checks before acceptance |
 | Run regeneration loop for failed samples | Up to 3 attempts per failed sample, log failure reasons for dropped samples |
@@ -111,7 +111,7 @@ Build the final benchmark from the filtered and validated dataset. Every sample 
 | editability_score | Float | How suitable the claim is for controlled rewriting |
 | diversity_bonus | Float | Reward for selecting underrepresented claim types |
 | target_span | String | Original proposition span targeted for rewriting |
-| generation_model | String | Model used for rewriting (e.g., csebuetnlp/banglat5) |
+| generation_model | String | Model used for rewriting (default: CohereLabs/aya-expanse-8b) |
 | regeneration_attempts | Int | Number of regeneration attempts before acceptance or drop |
 | verification_result | JSON | Multi-stage verification outcome (claim integrity, surface quality, semantic quality) |
 

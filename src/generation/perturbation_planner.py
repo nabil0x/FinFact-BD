@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Any, Dict, List, Protocol
 
 from src.generation.metadata import RankedClaim, RewritePlan
+from src.generation.models import InstructionModel
+from src.generation.prompts import build_planning_prompt
+from src.generation.utils import extract_json_payload
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +27,11 @@ TYPE_TO_FAMILY = {
     "temporal": "temporal_shift",
     "causal": "causal_inversion",
 }
+
+
+class RewritePlanner(Protocol):
+    def create_plan(self, ranked_claim: RankedClaim) -> RewritePlan:
+        """Create a structured perturbation plan for one selected claim."""
 
 
 @dataclass(frozen=True)
@@ -54,6 +62,7 @@ class PerturbationPlanner:
             edit_scope="target_sentence",
             expected_change=expected,
             verification_constraints=constraints,
+            target_span=self._target_span(family, ranked_claim),
         )
         logger.info("Planned %s rewrite for sentence %d", family, claim.sentence_index)
         return plan
@@ -87,11 +96,106 @@ class PerturbationPlanner:
             )
         raise ValueError(f"Unsupported rewrite family: {family}")
 
+    def _target_span(self, family: str, ranked_claim: RankedClaim) -> str:
+        claim = ranked_claim.claim
+        if family == "numerical_fact" and claim.numbers:
+            return claim.numbers[0]
+        if family == "policy_reversal" and claim.policies:
+            return claim.policies[0]
+        if family == "entity_replacement" and claim.entities:
+            return claim.entities[0]
+        if family == "temporal_shift" and claim.dates:
+            return claim.dates[0]
+        return claim.sentence
 
-def build_planner(config: Dict[str, object] | None = None) -> PerturbationPlanner:
+
+@dataclass(frozen=True)
+class LLMPerturbationPlanner:
+    model: InstructionModel
+    allowed_families: List[str]
+    max_new_tokens: int = 768
+    temperature: float = 0.0
+    seed: int = 42
+
+    def create_plan(self, ranked_claim: RankedClaim) -> RewritePlan:
+        prompt = build_planning_prompt(ranked_claim, self.allowed_families)
+        raw = self.model.generate_text(prompt, self.temperature, self.seed, self.max_new_tokens)
+        payload = extract_json_payload(raw)
+        if not isinstance(payload, dict):
+            raise ValueError("Planner JSON must be an object")
+        family = self._family(payload)
+        constraints = self._constraints(payload, ranked_claim)
+        plan = RewritePlan(
+            family=family,
+            target_claim=ranked_claim.claim,
+            edit_instruction=str(payload.get("edit_instruction") or "").strip(),
+            edit_scope=str(payload.get("locality") or payload.get("edit_scope") or "sentence").strip(),
+            expected_change=str(payload.get("expected_change") or "").strip(),
+            verification_constraints=constraints,
+            target_span=str(payload.get("target_span") or "").strip(),
+            replacement=str(payload.get("replacement") or "").strip(),
+            planner_model=self.model.model_name,
+        )
+        if not plan.edit_instruction or not plan.expected_change or not plan.target_span:
+            raise ValueError("Planner JSON must include edit_instruction, expected_change, and target_span")
+        logger.info("LLM planned %s rewrite for sentence %d", family, ranked_claim.claim.sentence_index)
+        return plan
+
+    def _family(self, payload: Dict[str, Any]) -> str:
+        family = str(payload.get("family") or payload.get("type") or "").strip()
+        family = family.replace(" ", "_")
+        aliases = {
+            "numeric": "numerical_fact",
+            "numerical": "numerical_fact",
+            "entity": "entity_replacement",
+            "policy": "policy_reversal",
+            "temporal": "temporal_shift",
+            "causal": "causal_inversion",
+        }
+        family = aliases.get(family, family)
+        if family not in self.allowed_families:
+            raise ValueError(f"Planner produced unsupported family: {family!r}")
+        return family
+
+    def _constraints(self, payload: Dict[str, Any], ranked_claim: RankedClaim) -> Dict[str, Any]:
+        provided = payload.get("verification_constraints", {})
+        if provided is not None and not isinstance(provided, dict):
+            raise ValueError("verification_constraints must be a JSON object")
+        constraints = dict(provided or {})
+        constraints.update(
+            {
+                "target_sentence_index": ranked_claim.claim.sentence_index,
+                "preserve_all_other_sentences": True,
+                "preserve_unrelated_facts": True,
+                "forbid_new_entities_outside_target": True,
+                "forbid_new_numbers_outside_target": True,
+                "forbid_new_dates_outside_target": True,
+                "selected_claim_scores": ranked_claim.to_dict(),
+            }
+        )
+        return constraints
+
+
+def build_planner(
+    config: Dict[str, object] | None = None,
+    model: InstructionModel | None = None,
+) -> RewritePlanner:
     cfg = config or {}
     families = list(cfg.get("allowed_families", FAMILIES))
     unknown = [family for family in families if family not in FAMILIES]
     if unknown:
         raise ValueError(f"Unknown perturbation families: {unknown}")
+    backend = str(cfg.get("backend", "heuristic"))
+    if backend == "llm_json":
+        if model is None:
+            raise ValueError("planner.backend=llm_json requires models.planner")
+        return LLMPerturbationPlanner(
+            model=model,
+            allowed_families=families,
+            max_new_tokens=int(cfg.get("max_new_tokens", 768)),
+            temperature=float(cfg.get("temperature", 0.0)),
+            seed=int(cfg.get("seed", 42)),
+        )
+    if backend != "heuristic":
+        raise ValueError(f"Unsupported planner backend: {backend}")
     return PerturbationPlanner(families)
