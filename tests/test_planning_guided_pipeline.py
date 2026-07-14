@@ -1,0 +1,162 @@
+from __future__ import annotations
+
+import csv
+from pathlib import Path
+
+from src.generation.claim_extraction import HeuristicClaimExtractor
+from src.generation.claim_selection import ClaimRanker, ClaimRankingConfig
+from src.generation.exporter import HumanValidationWorkbookBuilder
+from src.generation.metadata import Article, SampleRecord
+from src.generation.models import ModelBundle
+from src.generation.perturbation_planner import build_planner
+from src.generation.pipeline import PlanningGuidedRewritePipeline
+
+
+class FakeGenerator:
+    model_name = "fake-instruction-model"
+    model_revision = "test"
+
+    def generate_batch(self, prompts, temperatures, seeds, max_new_tokens):
+        outputs = []
+        for prompt in prompts:
+            article = prompt.rsplit("Original complete article:", 1)[-1]
+            article = article.rsplit("Complete rewritten article:", 1)[0].strip()
+            outputs.append(article.replace("১০ শতাংশ", "৭ শতাংশ", 1))
+        return outputs
+
+
+class FakeEmbedder:
+    model_name = "fake-sbert"
+
+    def encode(self, texts):
+        vectors = []
+        for text in texts:
+            vectors.append([float(len(text)), float(text.count("বাংলাদেশ")), float(text.count("ব্যাংক")), 1.0])
+        return vectors
+
+
+class FakeNLI:
+    model_name = "fake-nli"
+
+    def contradiction_score(self, premise, hypothesis):
+        return 0.91 if premise != hypothesis else 0.0
+
+
+class FakeFluency:
+    model_name = "fake-fluency"
+
+    def perplexity(self, text):
+        return 35.0
+
+
+def fake_bundle() -> ModelBundle:
+    return ModelBundle(FakeGenerator(), FakeEmbedder(), FakeNLI(), FakeFluency())
+
+
+def test_claim_extractor_returns_factual_sentence_claims():
+    article = Article(
+        article_id="a1",
+        headline="বাংলাদেশ ব্যাংক সুদের হার বাড়িয়েছে",
+        text="বাংলাদেশ ব্যাংক নীতিগত সুদের হার ১০ শতাংশ বাড়িয়েছে। বাজার স্থিতিশীল আছে।",
+    )
+    claims = HeuristicClaimExtractor().extract(article)
+
+    assert claims
+    assert claims[0].sentence_index == 0
+    assert claims[0].sentence == "বাংলাদেশ ব্যাংক নীতিগত সুদের হার ১০ শতাংশ বাড়িয়েছে।"
+    assert claims[0].numbers == ["১০"]
+    assert claims[0].claim_type in {"policy", "numerical"}
+
+
+def test_ranker_and_planner_create_structured_plan():
+    article = Article(
+        article_id="a1",
+        headline="বাংলাদেশ ব্যাংক সুদের হার বাড়িয়েছে",
+        text="বাংলাদেশ ব্যাংক নীতিগত সুদের হার ১০ শতাংশ বাড়িয়েছে।",
+    )
+    claims = HeuristicClaimExtractor().extract(article)
+    ranker = ClaimRanker(ClaimRankingConfig(min_overall_score=0.1, max_risk_score=1.0))
+    selected = ranker.select(article, claims)
+
+    assert selected is not None
+    assert selected.overall_score > 0
+    plan = build_planner().create_plan(selected)
+    assert plan.target_claim.sentence_index == 0
+    assert plan.edit_scope == "target_sentence"
+    assert plan.verification_constraints["preserve_all_other_sentences"] is True
+
+
+def test_pipeline_runs_end_to_end_with_injected_models(tmp_path):
+    input_csv = tmp_path / "input.csv"
+    with open(input_csv, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["article_id", "headline", "text"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "article_id": "a1",
+                "headline": "বাংলাদেশ ব্যাংক সুদের হার বাড়িয়েছে",
+                "text": "বাংলাদেশ ব্যাংক নীতিগত সুদের হার ১০ শতাংশ বাড়িয়েছে। বাজার স্থিতিশীল আছে।",
+            }
+        )
+    config = {
+        "paths": {
+            "input_csv": str(input_csv),
+            "output_dir": str(tmp_path / "out"),
+            "checkpoint": str(tmp_path / "out" / "checkpoint.json"),
+        },
+        "pipeline": {"seed": 7},
+        "input": {"id_column": "article_id", "headline_column": "headline", "text_column": "text"},
+        "claim_extraction": {"min_confidence": 0.1},
+        "claim_ranking": {"min_overall_score": 0.1, "max_risk_score": 1.0},
+        "generation": {"temperature": 0.0, "max_new_tokens": 256},
+        "regeneration": {"max_attempts": 3, "temperature_step": 0.1},
+        "verification": {
+            "semantic_similarity_min": 0.1,
+            "contradiction_min": 0.5,
+            "fluency_max_perplexity": 100.0,
+            "duplicate_max_similarity": 0.99,
+        },
+        "planner": {},
+        "human_validation": {"enabled": False},
+    }
+
+    result = PlanningGuidedRewritePipeline(config, model_bundle=fake_bundle()).run()
+
+    assert len(result.samples) == 1
+    sample = result.samples[0]
+    assert "৭ শতাংশ" in sample.rewritten_article
+    assert sample.verification_scores["passed"] is True
+    assert (tmp_path / "out" / "finfact_bd_rewritten.csv").exists()
+    assert (tmp_path / "out" / "metadata.json").exists()
+
+
+def test_human_validation_workbook_is_claim_first(tmp_path):
+    sample = SampleRecord(
+        sample_id="s1",
+        article_id="a1",
+        headline="বাংলাদেশ ব্যাংক সুদের হার বাড়িয়েছে",
+        original_article="বাংলাদেশ ব্যাংক নীতিগত সুদের হার ১০ শতাংশ বাড়িয়েছে।",
+        rewritten_article="বাংলাদেশ ব্যাংক নীতিগত সুদের হার ৭ শতাংশ বাড়িয়েছে।",
+        selected_claim={"sentence": "বাংলাদেশ ব্যাংক নীতিগত সুদের হার ১০ শতাংশ বাড়িয়েছে।"},
+        claim_index=0,
+        claim_type="policy",
+        perturbation_family="policy_reversal",
+        rewrite_plan={},
+        generator_model="fake",
+        model_revision="test",
+        prompt_version="v",
+        temperature=0.0,
+        seed=1,
+        verification_scores={"passed": True},
+        regeneration_attempts=1,
+        timestamp="2026-07-14T00:00:00+00:00",
+    )
+    output = tmp_path / "validation.xlsx"
+    HumanValidationWorkbookBuilder(output).build([sample])
+
+    from openpyxl import load_workbook
+
+    wb = load_workbook(output)
+    assert wb.sheetnames == ["Instructions", "Samples", "Full Articles"]
+    headers = [cell.value for cell in wb["Samples"][1]]
+    assert headers == ["sample_id", "headline", "claim_focus", "context_window", "label", "confidence", "justification"]

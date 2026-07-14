@@ -1,6 +1,6 @@
 # Novelty Assessment: FinFact-BD Benchmark
 
-To the best of our knowledge, FinFact-BD is the first comprehensive benchmark for Bengali financial misinformation that combines claim-guided Bangla rewriting, human validation, and multi-model evaluation. This document assesses what is novel about the work, what is not, and how to defend the claims against reasonable criticism. It refers to the frozen `FinFact-BD-v1.0` release regenerated on `2026-07-14`.
+To the best of our knowledge, FinFact-BD is the first comprehensive benchmark for Bengali financial misinformation that combines planning-guided Bangla claim rewriting, human validation, and multi-model evaluation. This document assesses what is novel about the work, what is not, and how to defend the claims against reasonable criticism. It refers to the frozen `FinFact-BD-v1.0` release regenerated on `2026-07-14`.
 
 ---
 
@@ -8,11 +8,11 @@ To the best of our knowledge, FinFact-BD is the first comprehensive benchmark fo
 
 ### 1. Benchmark Scope
 
-FinFact-BD is the first benchmark that pairs claim-guided Bangla rewriting with real-world article data specifically for Bengali financial misinformation. Existing Bengali NLP datasets cover news classification, sentiment analysis, and named entity recognition. None target the financial misinformation detection task with this combination of controlled rewriting strategies and domain-specific source material from the Bangladeshi financial ecosystem.
+FinFact-BD is the first benchmark that pairs planning-guided Bangla claim rewriting with real-world article data specifically for Bengali financial misinformation. Existing Bengali NLP datasets cover news classification, sentiment analysis, and named entity recognition. None target the financial misinformation detection task with this combination of controlled rewriting strategies and domain-specific source material from the Bangladeshi financial ecosystem.
 
 The dataset draws from BENI v2, a corpus of Bengali economy articles, and applies five fact-aware rewriting families (numerical fact change, policy reversal, entity replacement, temporal shift, causal inversion) to create labeled real/fake pairs. Each rewriting family targets a distinct financial proposition type, making the benchmark useful for diagnosing model weaknesses, not just measuring accuracy.
 
-The generation approach uses a claim-guided pipeline: claims are extracted from source articles, scored for suitability, planned with a target change, and then realized by a Bangla generation model (csebuetnlp/banglat5 or Vacaspati/BanglaByT5). The novelty lies in the planning pipeline (extraction, selection, planning, generation, verification), not in the generator itself.
+The generation approach uses a planning-guided claim rewriting pipeline: claims are extracted from source articles, scored for suitability, converted into explicit perturbation plans, realized by a constrained Bangla generation model (csebuetnlp/banglat5 or Vacaspati/BanglaByT5), and accepted only after independent verification. The novelty lies in the controlled system around the generator, not in the generator itself.
 
 ### 2. Human Validation
 
@@ -40,11 +40,11 @@ Most benchmark papers report aggregate metrics. The failure-mode decomposition i
 
 ### 6. Controlled Generation Pipeline
 
-FinFact-BD uses a multi-stage controlled generation pipeline, not free-form generation or token-level rule replacement. The pipeline is: claim extraction, claim selection, rewrite planning, Bangla generation, multi-stage verification, and regeneration. Each stage has a defined role.
+FinFact-BD uses a multi-stage controlled generation pipeline, not free-form generation or token-level rule replacement. The pipeline is: claim extraction, claim selection, rewrite planning, constrained Bangla generation, independent verification, acceptance, and regeneration when needed. Each stage has a defined role.
 
-The planner decides what change should happen. The generator (csebuetnlp/banglat5 or Vacaspati/BanglaByT5) realizes the change by rewriting only the target sentence or paragraph, never the full article. The verifier then checks whether the output meets quality criteria across three dimensions: claim integrity (did the intended claim change, and only that claim?), surface quality (is the Bangla fluent and journalistic?), and semantic quality (is the rewrite a believable financial news item that contradicts the original where intended?).
+The planner decides what change should happen. The generation model (csebuetnlp/banglat5 or Vacaspati/BanglaByT5) is constrained to realize that change by rewriting only the target sentence or paragraph, never the full article. The verifier then decides whether the output is accepted, using criteria across three dimensions: claim integrity (did the intended claim change, and only that claim?), surface quality (is the Bangla fluent and journalistic?), and semantic quality (is the rewrite a believable financial news item that contradicts the original where intended?).
 
-This is not free-form generation. It is a controlled, auditable process where every accepted sample has a traceable provenance: the source claim, the selection score, the rewrite plan, the generator model, the verification result, and the number of regeneration attempts. The pipeline constrains the generator at every step, producing targeted misinformation for benchmark construction rather than arbitrary text.
+This is not free-form generation. It is a controlled, auditable process where every accepted sample has a traceable provenance: the source claim, the selection score, the rewrite plan, the generator model, the verification result, and the number of regeneration attempts. The pipeline constrains the generator at every step, producing targeted misinformation for benchmark construction rather than arbitrary text. The model never has the final say; independent verification governs acceptance.
 
 ---
 
@@ -109,7 +109,7 @@ This is why FinFact-BD includes a real-world test set. The benchmark explicitly 
 Five perturbation types cover the primary linguistic failure modes identified in the financial misinformation literature. Adding more would increase annotation cost without proportional diagnostic value. The current set is sufficient to answer the research questions.
 
 **"Bangla generation models already exist."**
-Yes, but we are not claiming novelty for the generator. The novelty is in the controlled pipeline that constrains the generator to produce targeted, verifiable misinformation for benchmark construction. The generator is an executor inside a larger planning and verification system. Using an existing model in a novel, constrained pipeline is a valid contribution.
+Yes, but we are not claiming novelty for the generator. The novelty is in the controlled system that constrains the generator to realize a pre-specified factual modification and accepts outputs only after independent verification. Using an existing model inside a planning-guided, verifiable, provenance-rich pipeline is a valid contribution.
 
 ---
 

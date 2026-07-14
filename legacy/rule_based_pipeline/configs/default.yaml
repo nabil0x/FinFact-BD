@@ -1,0 +1,73 @@
+# FinFact-BD Configuration
+# ========================
+
+# Paths
+paths:
+  data_dir: "/mnt/work/phd/phd-prep/financial nlp/papers/data"
+  beni_v2: "${paths.data_dir}/beni_v2_deduped.csv.zst"
+  output_dir: "${paths.data_dir}/finfact_bd"
+  
+  # Generated files
+  originals: "${paths.output_dir}/finfact_bd_originals.csv"
+  perturbed: "${paths.output_dir}/finfact_bd_perturbed.csv"
+  combined: "${paths.output_dir}/finfact_bd_combined.csv"
+  filtered: "${paths.output_dir}/finfact_bd_perturbed_filtered.csv"
+  metadata: "${paths.output_dir}/metadata.json"
+  
+  # Dictionaries
+  banglasenti: "${paths.data_dir}/banglasenti/BanglaSenti_sample.csv"
+  financial_glossary: "${paths.data_dir}/finlit-glossary/bangla_financial_glossary.csv"
+  dse_companies: "${paths.data_dir}/finlit-glossary/dse_companies.csv"
+  banking_terms: "${paths.data_dir}/finlit-glossary/banking_terms.csv"
+  remittance_terms: "${paths.data_dir}/finlit-glossary/remittance_terms.csv"
+
+# Sampling
+sampling:
+  num_samples: 10000
+  random_seed: 42
+  financial_categories: ["Economy"]
+
+# Perturbation
+perturbation:
+  target_per_type: 2000
+  total_target: 20000
+  
+# Quality filtering
+quality_filter:
+  # Rule-based
+  min_text_length: 50
+  max_length_ratio: 2.0
+  dedup_similarity_threshold: 0.9
+  
+  # LLM judge models
+  models:
+    - name: "mDeBERTa"
+      model_id: "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
+      weight: 1.0
+  
+  # Thresholds
+  contradiction_threshold: 0.4
+  ensemble_method: "single_model"
+
+# Training
+training:
+  models:
+    - name: "BengaliBERT"
+      model_id: "csebuetnlp/banglabert"
+    - name: "XLM-RoBERTa"
+      model_id: "xlm-roberta-base"
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  random_seed: 42
+
+# Evaluation
+evaluation:
+  metrics:
+    - accuracy
+    - macro_f1
+    - precision
+    - recall
+    - confusion_matrix
+    - per_class_f1
+    - per_perturbation_f1

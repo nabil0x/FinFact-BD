@@ -4,9 +4,9 @@ Frozen release: `FinFact-BD-v1.0`, regenerated on `2026-07-14`.
 
 ## Abstract
 
-Financial misinformation in Bengali is still underrepresented in benchmark design, even though the underlying news ecosystem is large, economically consequential, and full of claims that are easy to distort in subtle ways. FinFact-BD addresses that gap with a controlled benchmark built from 10,000 real Bengali financial articles sampled from BENI v2 and 10,000 claim-guided rewrites generated from the same source pool. The generation process operates at the level of propositions rather than words, and it is organized around five misinformation families: numerical fact change, policy reversal, entity replacement, temporal shift, and causal inversion. That choice matters. It keeps the benchmark grounded in financial meaning rather than lexical noise.
+Financial misinformation in Bengali is still underrepresented in benchmark design, even though the underlying news ecosystem is large, economically consequential, and full of claims that are easy to distort in subtle ways. FinFact-BD addresses that gap with a controlled benchmark built from 10,000 real Bengali financial articles sampled from BENI v2 and 10,000 planning-guided claim rewrites generated from the same source pool. The generation process operates at the level of propositions rather than words, and it is organized around five misinformation families: numerical fact change, policy reversal, entity replacement, temporal shift, and causal inversion. That choice matters. It keeps the benchmark grounded in financial meaning rather than lexical noise.
 
-The generation pipeline does not rely on microscopic span replacement. It first extracts candidate propositions, then selects them through a policy that combines importance, editability, and diversity, drafts a controlled claim plan, and then uses a Bangla sequence-to-sequence model (csebuetnlp/banglat5 or Vacaspati/BanglaByT5) to realize the change in natural prose while keeping the rest of the article stable. The generator rewrites only the targeted sentence or local paragraph, not the full article. Samples are then filtered through a three-stage verification module, and failed candidates are regenerated up to three times before acceptance or discard. A separate human-validation pack covers 300 stratified samples, annotated by three Bengali-native annotators in a claim-centric workflow that focuses attention on the changed claim and its local context instead of forcing annotators to search entire articles for a hidden edit. The final release is split by original article identifier to prevent leakage across train, validation, and test partitions. Rich metadata records the rewrite trace, confidence, and provenance for each sample.
+The generation pipeline does not rely on microscopic span replacement. It first extracts candidate propositions, then selects them through a policy that combines importance, editability, and diversity, drafts an explicit perturbation plan, and then constrains a Bangla sequence-to-sequence model (csebuetnlp/banglat5 or Vacaspati/BanglaByT5) to realize the planned change in natural prose while keeping the rest of the article stable. The model does not decide what misinformation to create; it only expresses a planned factual modification. Independent verification is the acceptance gate: failed candidates are regenerated up to three times before acceptance or discard. A separate human-validation pack covers 300 stratified samples, annotated by three Bengali-native annotators in a claim-centric workflow that focuses attention on the changed claim and its local context instead of forcing annotators to search entire articles for a hidden edit. The final release is split by original article identifier to prevent leakage across train, validation, and test partitions. Rich metadata records the rewrite trace, confidence, and provenance for each sample.
 
 The benchmark is designed to make a narrow point clearly: Bengali financial misinformation is not just a low-resource classification task, and it is not well served by generic lexical perturbation. It is a claim-level reasoning problem, and the benchmark should look like one.
 
@@ -20,11 +20,11 @@ The second is financial fact verification and financial misinformation detection
 
 The third is adversarial benchmark methodology. ADVSCORE argues that a benchmark should be adversarial in a way humans can actually understand, not merely in a way that weakens a model. Fighting Fire with Fire and related survey work on adversarial attacks and claim verification reinforce the same point: synthetic generation is only defensible when it is controlled, validated, and interpretable. FinFact-BD follows that logic. It is not trying to invent a new detection paradigm. It is trying to provide a Bengali financial benchmark that is controlled enough to trust and realistic enough to matter.
 
-## Why Claim-Guided Rewriting
+## Why Planning-Guided Claim Rewriting
 
 Symbolic token replacement is reproducible, but in long-form Bengali financial news it often produces edits that are too small to carry rhetorical force. A benchmark built from such microscopic changes is technically reproducible but visually unconvincing. It asks annotators to detect the edit by inspection, which is not the same thing as reading a realistic piece of misinformation.
 
-The revised pipeline keeps the control but changes the realization step. We still decide what should change, and we still constrain the change to a specific factual proposition. But instead of swapping tokens directly, we extract candidate claims from the article, score them by importance, editability, and diversity, build a structured rewrite plan, and then pass the plan to a Bangla sequence-to-sequence model (csebuetnlp/banglat5 or Vacaspati/BanglaByT5) that rewrites only the targeted sentence or local paragraph. The generator is a sentence-level rewriter, not a full-article inventor. It receives the original article and the claim plan, then expresses the intended factual change in natural Bangla while preserving journalistic style and keeping the surrounding text coherent. If verification rejects a candidate, the pipeline regenerates up to three times, keeping the best passing sample or discarding the article entirely. The goal is simple: keep the change explicit enough for humans to see, but structured enough for the benchmark to remain measurable. We therefore treat the article as a claim-bearing object rather than a bag of editable words.
+The revised pipeline keeps the control but changes the realization step. We still decide what should change, and we still constrain the change to a specific factual proposition. But instead of swapping tokens directly, we extract candidate claims from the article, score them by importance, editability, and diversity, build a structured rewrite plan, and then constrain a Bangla sequence-to-sequence model (csebuetnlp/banglat5 or Vacaspati/BanglaByT5) to rewrite only the targeted sentence or local paragraph. The model is one component in a constrained generation system, not a full-article inventor and not the source of the misinformation decision. The planner determines the target claim, perturbation family, intended factual change, locality constraints, and verification requirements before generation begins. Independent verification then decides whether the output is accepted. If verification rejects a candidate, the pipeline regenerates up to three times, keeping a passing sample or discarding the article entirely. The goal is simple: keep the change explicit enough for humans to see, but structured enough for the benchmark to remain measurable. We therefore treat the article as a claim-bearing object rather than a bag of editable words.
 
 ```text
 Original article
@@ -33,11 +33,11 @@ Claim / proposition extraction
       ↓
 Claim selection (importance + editability + diversity scoring)
       ↓
-Structured claim plan
+Explicit perturbation plan
       ↓
-Bangla generation model (rewrites target sentence/paragraph)
+Constrained Bangla generation model (realizes planned local rewrite)
       ↓
-Multi-stage verification
+Independent verification and acceptance gate
       ↓
 Regeneration loop (up to 3 attempts)
       ↓
@@ -56,11 +56,11 @@ We sample 10,000 Bengali financial articles from BENI v2. The source pool is fil
 
 Each article is decomposed into sentence-level financial propositions. The generator looks for claim-bearing spans such as numbers, policy actions, entities, dates, causal connectors, and attribution cues. Those propositions are not edited arbitrarily. Each candidate claim receives three component scores: `importance_score` (how central the claim is to the article), `editability_score` (how feasible the claim is to rewrite within its rewrite family), and `diversity_bonus` (a penalty reduction for claims that diversify the family distribution across the dataset). The highest-scoring claim is selected, subject to family balance and duplicate avoidance, and then turned into a structured plan that specifies which factual claim will change, why that claim was chosen, and which local context must remain stable.
 
-### 3. Bangla generation model rewriting
+### 3. Constrained Bangla generation model rewriting
 
-The generator receives the original article together with the structured claim plan and rewrites only the affected sentence or a single local paragraph. The model used is a Bangla sequence-to-sequence model, either csebuetnlp/banglat5 or Vacaspati/BanglaByT5. The prompt shape is narrow: it specifies the target claim, the desired factual change, and constraints on style and scope. The generator is not allowed to invent a new article. Its job is narrower: express the intended factual change in natural Bangla while preserving journalistic style and keeping the surrounding article coherent. The planner and the generator are conceptually separate stages, even if they use the same base model.
+The generation model receives the original article together with the structured perturbation plan and rewrites only the affected sentence or a single local paragraph. The model used is a Bangla sequence-to-sequence model, either csebuetnlp/banglat5 or Vacaspati/BanglaByT5. The prompt shape is narrow: it specifies the target claim, the desired factual change, and constraints on style and scope. The model is not allowed to invent a new article and does not decide what misinformation to create. Its job is narrower: express the planned factual change in natural Bangla while preserving journalistic style and keeping the surrounding article coherent. The planner and the generator are conceptually separate stages, even if they use the same base model.
 
-### 4. Claim-guided rewrite families
+### 4. Planning-guided rewrite families
 
 The benchmark still uses five families of factual manipulation:
 
@@ -72,13 +72,13 @@ The benchmark still uses five families of factual manipulation:
 
 These families are intentionally narrow. They map onto common forms of financial misinformation and keep the benchmark explainable. Under the revised pipeline, they operate as generation constraints rather than literal string-replacement rules.
 
-### 5. Multi-hop planning and difficulty control
+### 5. Local planning and difficulty control
 
-Perturbations are not limited to single edits. The planner can compose multiple operations into a multi-hop plan and assign an easy, medium, or hard difficulty level. Difficulty is controlled by both the planned hop count and the visibility of the resulting change, so the final dataset is not accidentally skewed toward one type of example.
+Each generated sample is limited to one planned factual change. The planner records the selected claim, rewrite family, edit scope, expected change, and constraints that must hold after generation. Difficulty is therefore controlled by the selected claim, perturbation family, edit visibility, and human-validation outcomes rather than by composing multiple hidden edits inside the same article.
 
 ### 6. Multi-stage verification
 
-Generated samples pass through a three-stage verification module, each with specific automatic checks:
+Generated samples pass through independent verification before acceptance. The verifier is not a final cleanup step; it governs whether the generated article can enter the dataset. The module has specific automatic checks:
 
 1. **Claim integrity** checks whether the intended proposition changed and whether any extra proposition changed. Automatic checks: claim-level before/after comparison (comparing the plan's `target_span` against the generated output) and span-locality check (verifying the edit is confined to the planned sentence or paragraph).
 2. **Surface quality** checks whether the rewrite is fluent Bangla, preserves journalistic style, and is not still microscopic. Automatic checks: fluency score (language model perplexity or a trained fluency classifier) and style preservation check (comparing token distributions and sentence length between original and rewritten spans).
@@ -124,4 +124,4 @@ FinFact-BD is not:
 - A classifier. The pipeline generates data; classification is the downstream task.
 - Article-level rewriting without a plan. The planner decides what changes before the generator touches the text.
 
-The generator is an executor inside a larger planning and verification pipeline, not a standalone generation system.
+The generation model is one component in a constrained generation system. The scientific contribution is the integration of explicit planning, constrained realization, independent verification, regeneration, and full provenance for realistic localized factual distortion.

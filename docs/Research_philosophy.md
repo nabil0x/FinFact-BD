@@ -88,7 +88,9 @@ We run ablation studies to understand what drives performance. What happens when
 
 ### Synthetic data is a tool, not the end goal
 
-We use controlled claim-guided rewriting because it is reproducible, auditable, and explainable. Every factual change has a known cause. This is a methodological choice, not a claim that synthetic data is superior to real data. Controlled rewrites let us manage difficulty and measure specific capabilities while keeping the resulting misinformation human-legible.
+We use planning-guided claim rewriting because it is reproducible, auditable, and explainable. Every factual change has a known cause. This is a methodological choice, not a claim that synthetic data is superior to real data. Controlled rewrites let us manage difficulty and measure specific capabilities while keeping the resulting misinformation human-legible.
+
+The objective is not to fabricate synthetic news articles. The framework generates controlled misinformation by rewriting exactly one factual claim inside an authentic Bangla financial news article while preserving the surrounding journalistic context. The model is not responsible for deciding what misinformation to create. It realizes a pre-specified perturbation plan, and independent verification governs acceptance.
 
 ### Real-world validation is essential
 

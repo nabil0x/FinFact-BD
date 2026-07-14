@@ -11,7 +11,7 @@ This checklist tracks progress toward a validated benchmark for Bengali financia
 
 ## Phase 0: Kaggle Rewrite Pipeline (Week 0)
 
-Generate controlled Bangla rewrites using claim-guided generation instead of rule-based token replacement. The planner decides what claim changes; the generator realizes the change; the verifier decides whether the result is acceptable.
+Generate controlled Bangla rewrites using planning-guided claim generation instead of rule-based token replacement. The planner decides what claim changes, how it changes, what must remain unchanged, and which checks must pass. The generator realizes the planned local rewrite. The verifier decides whether the result is acceptable.
 
 - [ ] Implement claim extraction (split articles into sentences, identify candidate propositions)
 - [ ] Implement claim selection scoring (importance_score, editability_score, diversity_bonus)
@@ -33,7 +33,7 @@ Generate controlled Bangla rewrites using claim-guided generation instead of rul
 
 ## Phase 1: Quality Filtering (Week 1)
 
-The claim-guided rewriting pipeline (Phase 0) includes built-in multi-stage verification as its primary quality control. mDeBERTa filtering is an additional downstream gate that catches samples the built-in verifier missed.
+The planning-guided rewriting pipeline (Phase 0) includes built-in multi-stage verification as its primary quality control. mDeBERTa filtering is an additional downstream gate that catches samples the built-in verifier missed.
 
 - [ ] Run mDeBERTa-v3 multilingual NLI filtering on Kaggle
 - [ ] Compute filtering statistics (pass rate, contradiction score distribution)

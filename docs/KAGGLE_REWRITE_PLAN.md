@@ -1,16 +1,16 @@
-# Kaggle Controlled Claim Rewriting Plan
+# Kaggle Planning-Guided Claim Rewriting Plan
 
 Frozen release target: `FinFact-BD-v1.0`.
 
 ## Goal
 
-Move FinFact-BD generation to a Kaggle-native pipeline that produces claim-guided Bangla rewrites instead of microscopic symbolic edits. The notebook should do the full generation pass on Kaggle: load the source articles, select candidate claims, plan the rewrite, execute the change with a Bangla generation model, verify the output, and export accepted samples.
+Move FinFact-BD generation to a Kaggle-native pipeline that produces planning-guided Bangla claim rewrites instead of microscopic symbolic edits. The notebook should do the full generation pass on Kaggle: load the source articles, select candidate claims, plan the rewrite, realize the planned change with a constrained Bangla generation model, verify the output, and export accepted samples.
 
 ## Why this change
 
-The previous symbolic edit strategy was controlled and reproducible, but many edits were too small to be easy for humans to notice in long Bengali financial articles. The new approach keeps the control but changes the realization step: we still decide what claim should change, but a generator rewrites the affected sentence or paragraph so the misinformation is more human-legible.
+The previous symbolic edit strategy was controlled and reproducible, but many edits were too small to be easy for humans to notice in long Bengali financial articles. The new approach keeps the control but changes the realization step: we still decide what claim should change, but a constrained generation model rewrites the affected sentence or paragraph so the misinformation is more human-legible.
 
-This is a controlled semantic editing pipeline, not free-form generation. The planner decides the claim, the rewriter realizes the change, and the verifier decides whether the result is acceptable.
+This is a controlled semantic editing pipeline, not free-form generation. The planner decides the claim, the perturbation family, the intended change, the locality constraints, and the verification requirements. The rewriter realizes the planned change. The verifier decides whether the result is acceptable.
 
 ## Recommended model path
 
@@ -19,7 +19,7 @@ Start with a small seq2seq Bangla generator on Kaggle:
 - `csebuetnlp/banglat5`
 - `Vacaspati/BanglaByT5`
 
-Use the smaller, cleaner model first. If the rewrite quality is too subtle or too generic, move to a stronger instruction model later, but keep it constrained to the selected claim. The generation model is for rewriting only, not for free-form article invention.
+Use the smaller, cleaner model first. If the rewrite quality is too subtle or too generic, move to a stronger instruction model later, but keep it constrained to the selected claim and rewrite plan. The generation model is for planned local realization only, not for choosing misinformation or inventing articles.
 
 ## Kaggle notebook stages
 
@@ -84,10 +84,11 @@ Use the smaller, cleaner model first. If the rewrite quality is too subtle or to
   - topic
   - overall length as much as possible
 - Keep the rewriter separate from the planner, even if both stages use the same base model.
+- Do not let the model choose the target claim, perturbation family, or factual change.
 
 ### 6. Multi-stage verification
 
-The verifier runs after generation and before acceptance as a staged module.
+The verifier runs after generation and before acceptance as a staged module. It is the acceptance gate, not a cleanup step.
 
 Stage 1: claim integrity
 
@@ -177,7 +178,7 @@ Rules:
 - Not a classifier
 - Not article-level rewriting without a plan
 
-The generator is an executor inside a larger planning and verification pipeline.
+The generation model is one component in a constrained generation system. It realizes a pre-specified claim rewrite; the planner and verifier control what may be accepted.
 
 ## Acceptance criterion
 

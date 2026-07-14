@@ -1,53 +1,363 @@
-# AI Research Agent Guide: FinFact-BD Benchmark
+# AI Research Agent Guide: FinFact-BD
 
-**Version:** 3.0
-**Target Venue:** FinNLP Workshop, COLING 2026
+**Version:** 4.0  
+**Target Venue:** FinNLP Workshop / COLING 2026  
 **Last Updated:** July 14, 2026
 
 ---
 
 ## Mission
 
-FinFact-BD is a rigorously validated benchmark for evaluating automatic detection of Bengali financial misinformation. It is not a dataset announcement. It is a controlled experimental setup designed to answer questions about model behavior on Bengali financial text.
+FinFact-BD is a benchmark for Bengali financial misinformation detection. It is
+not a dataset announcement and it is not a free-form synthetic news generator.
 
-Every decision should prioritize scientific rigor, reproducibility, and lasting community value over shortcuts or speed.
+The scientific contribution is a planning-guided claim rewriting framework:
+controlled misinformation is produced by changing exactly one factual claim
+inside an authentic Bangla financial news article while preserving the
+surrounding journalistic context.
+
+Every agent working on this repository must prioritize scientific rigor,
+auditability, reproducibility, and human-legible evaluation over implementation
+shortcuts.
 
 ---
 
-## Research Philosophy
+## Core Philosophy
 
-Five principles guide every decision in this project.
+The framework does not fabricate complete synthetic articles. It treats each
+source article as a structured collection of factual propositions.
 
-**Benchmark > Dataset.**
-A dataset is raw material. A benchmark is a validated instrument for measuring model performance. We are building an instrument. The dataset is a component, not the contribution.
+The pipeline:
 
-**Research Questions > "We built X".**
-Papers framed around "we built a dataset" are forgettable. Papers framed around "we answer these questions" are cited. Every experiment exists to serve at least one RQ. If you cannot name the RQ, do not run the experiment.
+```text
+Authentic article
+  -> Claim extraction
+  -> Claim ranking
+  -> Explicit perturbation planning
+  -> Constrained local generation
+  -> Independent verification
+  -> Regeneration if rejected
+  -> Acceptance
+  -> Dataset export
+  -> Human validation workbook
+```
 
-**Human validation is mandatory.**
-A benchmark without human-validated ground truth is just algorithmic noise. Human annotation answers questions machines cannot: Does this look realistic? Could this spread on social media? Would an investor believe it? We validate 300 samples across 5 claim-rewriting families, including multi-hop compositions, with 3 annotators each.
+The generation model is one component in a constrained generation system. It is
+not responsible for deciding what misinformation to create. The planner decides:
 
-**Error analysis is a contribution.**
-Accuracy numbers are commodities. Understanding why models fail is insight. Our error analysis is not an afterthought. It is a core contribution. False negatives, false positives, confusion patterns, and linguistic feature analysis reveal what current Bengali NLP models actually understand.
+- which claim will be modified
+- which perturbation family applies
+- what factual change is intended
+- where the edit is allowed to occur
+- which facts must remain unchanged
+- which verification constraints must pass
 
-**Reproducibility is non-negotiable.**
-Every figure, table, metric, and dataset split must be regeneratable from source code. No manual edits. No hidden preprocessing. No undocumented scripts. Another researcher should be able to reproduce every result in the paper.
+The model only realizes that planned modification in fluent Bangla. Independent
+verification governs acceptance. The model never has the final say.
+
+---
+
+## Non-Negotiables
+
+- Do not restore the legacy rule-based generator into the active package.
+- Do not implement regex/entity/numeric substitution as the default generator.
+- Do not let the model freely rewrite or invent articles.
+- Do not accept failed generations by relaxing verification thresholds silently.
+- Do not claim multi-hop perturbation unless code explicitly implements it.
+- Do not infer implementation from comments, TODOs, or documentation.
+- Do not add hidden fallbacks or silent exception handlers.
+- Do not drop provenance fields from exported samples.
+
+Legacy code is preserved only for historical comparison in:
+
+```text
+legacy/rule_based_pipeline/
+```
+
+Active code must not import from that directory.
+
+---
+
+## Active Architecture
+
+```text
+src/generation/
+  metadata.py              Shared dataclasses and sample schema
+  utils.py                 Sentence splitting, feature extraction, IDs, JSON helpers
+  claim_extraction.py      Factual proposition extraction interface
+  claim_selection.py       Claim ranking and quality gate
+  perturbation_planner.py  Structured rewrite-plan generation
+  prompts.py               Prompt templates and prompt versioning
+  models.py                Generation, embedding, NLI, and fluency model interfaces
+  rewrite_generator.py     Constrained localized rewrite realization
+  verifier.py              Independent verification modules
+  regeneration.py          Retry controller with attempt records
+  exporter.py              Dataset and human-validation workbook export
+  pipeline.py              End-to-end orchestration and checkpointing
+```
+
+The default pipeline class is:
+
+```python
+PlanningGuidedRewritePipeline
+```
+
+The default CLI is:
+
+```bash
+python scripts/run_rewrite_pipeline.py \
+  --config configs/rewrite_pipeline.yaml \
+  --input data/finfact_bd/finfact_bd_originals.csv \
+  --output-dir data/generated/rewrite_generation \
+  --num-samples 100
+```
+
+---
+
+## Pipeline Contracts
+
+### 1. Claim Extraction
+
+Input:
+
+- `headline`
+- `article`
+- `metadata`
+
+Output:
+
+```python
+Claim(
+    sentence_index,
+    sentence,
+    claim_type,
+    entities,
+    numbers,
+    policies,
+    dates,
+    confidence,
+)
+```
+
+The extractor identifies sentence-level factual propositions, not isolated
+regex spans. The current implementation is heuristic, but the interface must
+allow an LLM or parser-based extractor to replace it without changing downstream
+code.
+
+### 2. Claim Ranking
+
+Each claim receives:
+
+- `importance_score`
+- `editability_score`
+- `verification_score`
+- `locality_score`
+- `risk_score`
+
+Overall score:
+
+```text
+0.35 * importance
++ 0.25 * editability
++ 0.20 * locality
++ 0.20 * verification
+```
+
+Only high-quality, low-risk claims should proceed to planning.
+
+### 3. Perturbation Planning
+
+The planner produces a structured `RewritePlan`:
+
+```python
+RewritePlan(
+    family,
+    target_claim,
+    edit_instruction,
+    edit_scope,
+    expected_change,
+    verification_constraints,
+)
+```
+
+Supported families:
+
+- `numerical_fact`
+- `policy_reversal`
+- `entity_replacement`
+- `temporal_shift`
+- `causal_inversion`
+
+The planner decides what changes. The generator does not.
+
+### 4. Constrained Local Generation
+
+Generation is prompt-based and localized. Prompt templates belong in
+`src/generation/prompts.py`, not inline inside orchestration code.
+
+Prompts must require:
+
+- preserve journalistic style
+- rewrite only the selected claim
+- preserve unrelated facts
+- avoid additional hallucinations
+- return the complete rewritten article
+
+The model may rewrite the selected sentence or local paragraph as directed by
+the plan. It must not invent a new article.
+
+### 5. Verification
+
+Verification is the acceptance gate. Each verifier returns:
+
+```python
+VerifierResult(
+    name,
+    score,
+    passed,
+    reason,
+    details,
+)
+```
+
+Required verifier categories:
+
+- intended claim modification
+- locality
+- semantic similarity using embeddings
+- contradiction using NLI
+- fluency using perplexity or equivalent model signal
+- journalistic style
+- hallucination / new-fact detection
+- duplicate detection
+
+Verification failures must be visible in exported metadata and logs.
+
+### 6. Regeneration
+
+If verification fails, regenerate up to the configured attempt limit, currently
+three attempts by default. Attempts may vary temperature or prompt wording, but
+must keep the same planned factual change and constraints.
+
+Failed generations are rejected. They are not accepted through weakened
+criteria.
+
+### 7. Export
+
+Every accepted sample must preserve:
+
+- `sample_id`
+- `article_id`
+- `headline`
+- `original_article`
+- `rewritten_article`
+- `selected_claim`
+- `claim_index`
+- `claim_type`
+- `perturbation_family`
+- `rewrite_plan`
+- `generator_model`
+- `model_revision`
+- `prompt_version`
+- `temperature`
+- `seed`
+- `verification_scores`
+- `regeneration_attempts`
+- `timestamp`
+
+Exports must include dataset files, metadata, and human-validation workbooks
+when enabled.
+
+### 8. Human Validation Workbook
+
+Human validation is claim-first. Annotators should not be asked to hunt through
+full articles before seeing the relevant claim.
+
+Workbook sheets:
+
+- `Instructions`
+- `Samples`
+- `Full Articles`
+
+The `Samples` sheet must include:
+
+- headline
+- claim focus
+- context window
+- label
+- confidence
+- justification
 
 ---
 
 ## Research Questions
 
-These RQs drive every phase of the benchmark. Nothing happens without serving at least one.
+Every task should serve at least one research question.
 
 | ID | Question | Why It Matters |
 |----|----------|----------------|
-| **RQ1** | Which claim-rewriting families are hardest for current models? | Reveals specific linguistic weaknesses in Bengali NLP systems |
-| **RQ2** | Do Bengali-specific PLMs outperform multilingual models on financial text? | Tests whether language-specific pretraining helps for domain-specific tasks |
-| **RQ3** | How do open-weight LLMs compare to fine-tuned smaller models? | Probes the tradeoff between generalization and specialization |
-| **RQ4** | Can models generalize from synthetic rewrites to real-world misinformation? | Validates ecological validity of the controlled rewriting approach |
-| **RQ5** | What systematic errors do models make across perturbation types? | Enables targeted improvement in future work |
+| RQ1 | Which rewrite families are hardest for current models? | Reveals specific linguistic weaknesses in Bengali NLP systems |
+| RQ2 | Do Bengali-specific PLMs outperform multilingual models on financial text? | Tests whether language-specific pretraining helps in this domain |
+| RQ3 | How do open-weight LLMs compare to fine-tuned smaller models? | Probes scale versus specialization |
+| RQ4 | Can models generalize from controlled rewrites to real-world misinformation? | Tests ecological validity |
+| RQ5 | What systematic errors do models make across perturbation families? | Enables targeted future work |
 
-When assigned a task, identify which RQ it serves. If it does not serve any RQ, question whether it should exist.
+If a task does not serve any RQ, challenge whether it belongs in the project.
+
+---
+
+## Human Validation Protocol
+
+Human annotation is mandatory for benchmark credibility.
+
+| Parameter | Value |
+|-----------|-------|
+| Samples | 300 |
+| Annotators | 3 per sample |
+| Agreement threshold | Fleiss' kappa >= 0.6 |
+| Task | Claim-centric `original` / `perturbed` / `not sure` |
+| Evidence shown first | Headline, claim focus, context window |
+| Full article | Available after the focused claim view |
+
+Annotators judge whether the focused claim appears original, perturbed, or
+uncertain. They provide confidence and a short justification. The protocol is
+designed to evaluate plausibility of localized factual misinformation, not the
+ability to find a hidden edit in a long article.
+
+---
+
+## Engineering Standards
+
+Research code is still production code for a paper.
+
+### Required
+
+- Python 3.11+
+- dataclasses for shared records
+- type hints throughout active code
+- YAML configuration
+- dependency injection for generation, embedding, NLI, and fluency models
+- logging at pipeline boundaries and failure points
+- explicit random seeds
+- checkpointing for long runs
+- tests for every pipeline stage
+- no active module above roughly 400 lines
+- no circular imports
+- no silent exception swallowing
+
+### Preferred
+
+- batch generation and embedding where possible
+- GPU use only through model adapters
+- lazy imports for heavyweight ML dependencies
+- small, composable modules over monolithic scripts
+
+### Validation Commands
+
+```bash
+python -m pytest -q
+python -m compileall -q src scripts tests
+```
 
 ---
 
@@ -55,497 +365,121 @@ When assigned a task, identify which RQ it serves. If it does not serve any RQ, 
 
 | Environment | Hardware | Purpose |
 |-------------|----------|---------|
-| Local machine | 6GB GPU (limited) | Code development, data preprocessing, analysis, git operations |
-| Kaggle | T4 GPU (16GB VRAM) | Primary compute: model fine-tuning, quality filtering, large-scale inference |
+| Local machine | Limited GPU | Code development, tests, preprocessing, documentation |
+| Kaggle | T4 GPU | Large generation runs, embedding/NLI/fluency verification, model evaluation |
 
-**Rule:** All GPU-intensive tasks run on Kaggle. Local machine is for CPU work only.
+GPU-intensive tasks should run on Kaggle or an equivalent GPU environment. Local
+runs should remain lightweight and testable through injected fake models.
 
-### Kaggle Workflow
-
-1. Develop scripts locally in `src/`
-2. Upload scripts + compressed data to Kaggle notebook (use zstd, max 20MB per file)
-3. Run GPU-intensive tasks on T4
-4. Download results (filtered CSVs, model checkpoints, metrics)
-5. Continue analysis locally
-
-**Dataset Loading Note:** When using `hf_hub_download`, always include `repo_type="dataset"`. Without it, HuggingFace searches model repos instead of dataset repos, causing 401 errors.
-
-**Active Quality Filter:** The generator now uses a multi-signal validation gate (proposition extraction, fluency, semantic similarity, contradiction scoring). `scripts/mdeberta_filter.py` and `scripts/finfact_bd_mdeberta_filter_kaggle.ipynb` remain as an optional downstream NLI filter (mDeBERTa-v3-only, threshold >= 0.4).
-
----
-
-## Human Validation Protocol
-
-Human annotation is the backbone of benchmark quality. Without it, we cannot claim our perturbations produce detectable misinformation.
-
-### Protocol
-
-| Parameter | Value | Rationale |
-|-----------|-------|-----------|
-| Samples | 300 | Stratified: 60 per perturbation type |
-| Annotators | 3 per sample | Majority vote for gold label |
-| Agreement threshold | Fleiss' κ ≥ 0.6 | Substantial agreement required |
-| Annotation task | Claim-centric: `original` / `perturbed` / `not sure` | Focuses annotation on the edited claim rather than whole-article hunting |
-| Training | 10 calibration samples with known labels | Ensures annotators understand the task |
-| Time estimate | ~2 hours per annotator | 300 samples, ~24 seconds each |
-
-Annotators receive separate XLSX workbooks. The `Samples` sheet shows the headline, a focused claim sentence, adaptive nearby context, and the full article text; the optional `Full Articles` sheet is available only if needed for quicker scrolling. Dropdown labels, required confidence, and justification fields keep the annotation structured. A hidden `claim_type` column is reserved for later analysis only. A separate manifest keeps the sample-to-source mapping for merging labels after annotation.
-
-### Annotation Task
-
-"Given a Bengali financial claim window, determine whether the highlighted claim appears original, perturbed, or not sure. Judge only the highlighted claim, not the whole article. Mark `perturbed` when the claim appears to contain a factual edit (number, entity, time, policy direction, comparison, quotation, or cause-effect relation) and `original` when no clear edit is visible."
-
-### Labels
-
-- `original`: The highlighted claim reads like an unmodified article and no clear factual edit is visible from the provided evidence
-- `perturbed`: The highlighted claim appears to contain a clear factual alteration or other synthetic edit
-- `not sure`: The annotator cannot confidently determine whether the claim is original or perturbed from the provided evidence
-
-### Selection Strategy
-
-300 samples stratified by:
-- Perturbation type (60 per type, all 5 types covered)
-- Quality score range (low, medium, high from the validation gate)
-- Article length (short, medium, long)
-- Entity density (few, many named entities)
-
-This ensures we test the filter across diverse conditions.
-
-### Impact
-
-- Filtered dataset may be adjusted based on human validation results
-- Human labels become the gold standard for benchmark construction
-- Models evaluated against human-validated ground truth
-- Error analysis grounded in human judgment
-
----
-
-## Benchmark Standards
-
-### Model Hierarchy
-
-We evaluate across five model families, ordered by increasing scale and complexity. Each tier tests a different hypothesis about what matters for Bengali financial misinformation detection.
-
-| Tier | Models | Hypothesis Tested |
-|------|--------|-------------------|
-| **Classical** | TF-IDF + LogReg, FastText, SVM | Can sparse features solve this at all? |
-| **Bengali PLM** | BanglaBERT (110M), Bengali Electra (110M) | Does language-specific pretraining help? |
-| **Multilingual PLM** | mBERT (110M), XLM-R (270M), ModernBERT (395M) | Does cross-lingual transfer close the gap? |
-| **Open LLM** | Llama-3-8B, Qwen-2.5-7B, Gemma-2-9B, Mistral-7B (all LoRA) | Can general reasoning compensate for domain weakness? |
-| **Closed LLM** | GPT-4o, Gemini-1.5-Pro, Claude-3.5-Sonnet (zero-shot only) | What is the ceiling without fine-tuning? |
-
-**Rules:**
-- Always use identical train/validation/test splits
-- Never compare models trained on different splits
-- Report mean ± std over 3 runs with different random seeds
-- Closed models are evaluated zero-shot only. No fine-tuning, no few-shot prompting.
-
-### Evaluation Metrics
-
-| Metric | What It Measures |
-|--------|-----------------|
-| Accuracy | Overall correct classification rate |
-| Macro F1 | Balanced across classes regardless of size |
-| Per-class F1 | Performance per label (precision, recall) |
-| Per-perturbation F1 | Which perturbation types are hardest? |
-| Per-difficulty F1 | Does difficulty calibration work? |
-| Confusion Matrix | Error distribution across perturbation types |
-| Cross-perturbation robustness | Can models handle unseen perturbation types? |
-| Human agreement correlation | Do model errors align with human disagreements? |
-| Calibration | Are model confidence scores meaningful? |
-
-### Statistical Significance
-
-- McNemar's test for pairwise model comparisons
-- Bootstrap confidence intervals for all reported metrics
-- Report p-values for all main claims
-- Effect sizes (Cohen's h) for practical significance
-
-### Evaluation Protocol
-
-1. **Splits:** 80/10/10 train/validation/test, grouped by `original_id` so no source article leaks across partitions
-2. **Cross-validation:** 5-fold on training set for model selection
-3. **Test set:** Held-out, reported once per model
-4. **Real-world test set:** Separate set of actual Bengali financial misinformation (not synthetically perturbed) for ecological validity
-5. **Reporting:** Mean ± std over 3 runs with different seeds
-
----
-
-## Dataset Schema
-
-FinFact-BD carries rich metadata per sample. This schema supports every downstream analysis.
-
-```json
-{
-  "id": "finfact_001",
-  "text": "প্রতিবেদনে বলা হয়েছে...",
-  "label": 0,
-  "split": "train",
-  "perturbation_type": "numerical_fact_change",
-  "perturbation_operator": "numeric_shift",
-  "perturbation_mode": "multi_hop",
-  "hop_count": 3,
-  "original_id": "beni_4521",
-  "source": "BENI v2",
-  "quality_score": 0.87,
-  "difficulty": "medium",
-  "planned_families": "[\"numerical_fact_change\", \"causal_inversion\", \"temporal_shift\"]",
-  "perturbation_families": "[\"numerical_fact_change\", \"causal_inversion\", \"temporal_shift\"]",
-  "reasoning_type": "numerical_fraud",
-  "changed_span_original": "১০",
-  "changed_span_replacement": "৯.৩",
-  "changed_span_role": "value",
-  "proposition_schema": "{\"family\":\"numerical_fact_change\",...}",
-  "validation_scores": "{\"passed\":true,...}",
-  "perturbation_plan": "{\"primary_family\":\"numerical_fact_change\",...}",
-  "human_annotation": {
-    "annotator_2": "perturbed",
-    "annotator_1": "perturbed",
-    "annotator_3": "not sure",
-    "agreement_score": 0.67,
-    "gold_label": "perturbed"
-  },
-  "metadata": {
-    "word_count": 245,
-    "entity_count": 3,
-    "article_length": "medium",
-    "date_range": "2020-2024"
-  }
-}
-```
-
-### Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique identifier |
-| `text` | string | Article text (original or perturbed) |
-| `label` | int | 0 = original (reliable), 1 = perturbed (misleading) |
-| `split` | string | `train`, `validation`, or `test` |
-| `perturbation_type` | string | One of: `numerical_fact_change`, `policy_reversal`, `entity_replacement`, `temporal_shift`, `causal_inversion`, or `null` for originals |
-| `perturbation_operator` | string | Specific rewrite operator used for the perturbation |
-| `perturbation_mode` | string | `single_hop` or `multi_hop` depending on how many propositions changed |
-| `original_id` | string | Reference to source article in BENI v2 |
-| `source` | string | Data source identifier |
-| `quality_score` | float | mDeBERTa contradiction probability (0-1) |
-| `difficulty` | string | `easy`, `medium`, or `hard` based on hop count |
-| `hop_count` | int | Number of applied perturbation operations |
-| `planned_families` | string | JSON list of families selected by the perturbation plan |
-| `perturbation_families` | string | JSON list of families actually applied |
-| `operation_reasoning_types` | string | JSON list of reasoning labels for each applied operation |
-| `reasoning_type` | string | Cognitive demand category |
-| `changed_span_original` | string | Original proposition span that was rewritten |
-| `changed_span_replacement` | string | Replacement span inserted by the perturbation |
-| `changed_span_role` | string | Role of the changed span within the proposition |
-| `proposition_schema` | string | JSON metadata describing the rewritten proposition |
-| `validation_scores` | string | JSON validation summary with contradiction, similarity, and fluency scores |
-| `validation_passed` | bool | Whether the sample passed the multi-signal validation gate |
-| `validation_issues` | string | JSON list of validation issues, if any |
-| `perturbation_plan` | string | JSON provenance for the full multi-hop perturbation plan |
-| `human_annotation` | object | Per-annotator labels, agreement score, gold label |
-| `metadata` | object | Word count, entity count, sentiment, length category, date range |
-
-### Difficulty Calibration
-
-| Level | Criteria | Purpose |
-|-------|----------|---------|
-| Easy | Single-hop perturbation | Sanity check |
-| Medium | Two coordinated changes | Core benchmark difficulty |
-| Hard | Three coordinated changes | Exposes model limits |
-
-### Reasoning Labels
-
-| Label | Perturbation Type | Cognitive Demand |
-|-------|-------------------|------------------|
-| `numerical_fraud` | Numerical fact change | Digit attention |
-| `policy_reversal` | Policy reversal | Direction reversal / policy tracking |
-| `entity_confusion` | Entity replacement | World knowledge grounding |
-| `temporal_distortion` | Temporal shift | Time tracking |
-| `causal_fallacy` | Causal inversion | Discourse structure |
-
-### Perturbation Types
-
-| Type | Strategy | What It Tests |
-|------|----------|---------------|
-| Numerical Fact Change | Rewrite one numeric value while preserving the sentence frame | Do models attend to explicit financial values? |
-| Policy Reversal | Flip direction words in policy-like or market-direction statements | Can models detect reversals in financial actions? |
-| Entity Replacement | Swap an entity with another entity from the same ontology class | Do models ground claims in the right institution or company? |
-| Temporal Shift | Change a year, month, or relative time phrase | Do models track when the fact occurred? |
-| Causal Inversion | Flip the outcome of a causal relation or causal connector | Do models track cause-effect structure? |
-
-### Difficulty Policy
-
-Difficulty is family-aware rather than purely random. Policy reversal and entity replacement are biased toward easier one-hop edits, numerical and temporal changes center on medium difficulty, and causal inversion is biased toward harder multi-hop composition. The sampler also tracks global difficulty budgets so the final benchmark stays close to the intended 25/45/30 easy/medium/hard mix without introducing new perturbation operators.
-
-The validation gate uses difficulty-aware contradiction thresholds so easy samples are not over-filtered by the same cutoff used for harder samples.
-Because the perturbations are proposition-level edits, the semantic-similarity upper bound is intentionally permissive: we want to keep near-original factual rewrites and reject only pathological duplicates, not high-similarity misinformation.
-
-Each perturbation should resemble misinformation that could realistically appear in newspapers, Facebook posts, investment groups, stock market discussions, banking rumors, or economic commentary. A single sample can combine multiple operations, but the result should still read like plausible financial prose. If a perturbation looks obviously fake, it weakens the benchmark.
-
----
-
-## Paper Writing Standards
-
-The paper is not the contribution. The benchmark is. The paper explains it.
-
-### Structure
-
-Every section serves a research question. If a section does not answer an RQ, it should not exist.
-
-| Section | RQ Served | Content |
-|---------|-----------|---------|
-| Abstract | All | Problem, method, results, contribution |
-| Introduction | All | Motivation, research questions, contributions |
-| Related Work | RQ1 | Financial misinformation detection, Bengali NLP, benchmarks |
-| Benchmark Construction | RQ1, RQ2 | Dataset generation, filtering, human validation |
-| Experimental Setup | RQ3, RQ5 | Models, metrics, splits, real-world test set |
-| Results | RQ3, RQ4, RQ5 | Main findings, per-RQ analysis |
-| Error Analysis | RQ4 | Failure modes, linguistic analysis |
-| Discussion | All | Implications, limitations, future work |
-| Conclusion | All | Summary, contributions |
-
-### Writing Rules
-
-- Frame around RQs, not "we built a dataset"
-- Use "To the best of our knowledge" instead of "first" unless verified through literature review
-- Error analysis is a major contribution, not an afterthought
-- Limitations section is required. Every limitation stated honestly increases credibility.
-- Every claim must be backed by experiment, citation, or analysis
-- Avoid marketing language. "Novel", "state-of-the-art", "first ever" are red flags unless rigorously justified.
-- Avoid unsupported claims. If you cannot prove it, do not say it.
-- Report negative results. If an experiment fails, document why. Negative results are still knowledge.
-
-### Contribution Claims
-
-1. **FinFact-BD:** A benchmark for Bengali financial misinformation with human validation
-2. **Perturbation taxonomy:** Five types of financial misinformation with analysis of detection difficulty
-3. **Human validation:** 300 samples × 3 annotators with inter-annotator agreement analysis
-4. **Real-world bridge:** Quantifying synthetic-to-real performance gap
-5. **Error analysis:** Linguistic features that predict model failure on Bengali financial text
-
----
-
-## Error Analysis
-
-This is not optional. It is a core contribution.
-
-### Error Categories
-
-| Category | Description | Expected Insight |
-|----------|-------------|------------------|
-| Numerical innumeracy | Model ignores changed numbers | Weak numerical reasoning in Bengali |
-| Entity confusion | Model can't track entity replacement | Poor named entity recognition |
-| Policy reversal failure | Model misses direction flips | Weak tracking of financial actions |
-| Temporal drift | Model misses date shifts | Limited time reasoning |
-| Causal failure | Model misses causal inversion | Insufficient discourse understanding |
-| Surface shortcuts | Model uses statistical artifacts | Dataset bias or annotation artifacts |
-
-### Analysis Methods
-
-- Confusion matrix analysis across perturbation types
-- Attention visualization for transformer models
-- Feature ablation: what makes an example hard?
-- Error propagation: do filtering errors compound in evaluation?
-- Per-difficulty breakdown: where do models succeed and fail?
-- Real-world vs synthetic comparison: do synthetic failures predict real failures?
-
-### Reporting
-
-Every error analysis must produce:
-- Quantitative summary (error counts, rates, distributions)
-- Qualitative examples (at least 5 per error category)
-- Linguistic feature analysis (what makes hard examples hard?)
-- Actionable insights (what should future work focus on?)
-
----
-
-## Coding Standards
-
-Research code should communicate ideas, not cleverness.
-
-### Requirements
-
-- Python 3.11+
-- Use `pathlib`, `pandas`, `numpy`, `polars` where useful, `dataclasses`, `typer`, `pydantic`
-- Avoid notebooks for production code
-- Everything runnable from CLI
-
-```bash
-python src/generation/perturbation_pipeline.py
-python src/validation/rule_based_filter.py
-python scripts/mdeberta_filter.py
-python src/training/train.py --model banglabert --split train
-python src/evaluation/evaluate.py --model banglabert --split test
-python src/evaluation/error_analysis.py --model banglabert
-```
-
-### Documentation
-
-Every module must explain:
-- Purpose
-- Inputs
-- Outputs
-- Assumptions
-- Limitations
-- Time complexity if relevant
-
----
-
-## Repository Structure
-
-```
-IDEA_3_FinFact_BD/
-├── configs/
-│   └── default.yaml
-├── src/
-│   ├── config.py
-│   ├── generation/
-│   │   ├── perturbation_pipeline.py
-│   │   └── extract_originals.py
-│   ├── validation/
-│   │   ├── rule_based_filter.py
-│   │   ├── mdeberta_filter.py
-│   │   ├── human_validation_protocol.py
-│   │   └── rebalance_dataset.py
-│   ├── benchmark/
-│   │   ├── difficulty_calibration.py
-│   │   ├── reasoning_labels.py
-│   │   └── split_builder.py
-│   ├── training/
-│   │   └── train.py
-│   ├── evaluation/
-│   │   ├── metrics.py
-│   │   ├── baselines.py
-│   │   ├── llm_evaluation.py
-│   │   └── error_analysis.py
-│   ├── analysis/
-│   │   ├── error_taxonomy.py
-│   │   └── feature_analysis.py
-│   └── visualization/
-├── scripts/
-│   ├── mdeberta_filter.py
-│   └── finfact_bd_mdeberta_filter_kaggle.ipynb
-├── paper/
-├── docs/
-├── outputs/
-├── tests/
-└── README.md
-```
-
----
-
-## Testing Standards
-
-Every component needs tests. Research code is still code.
-
-### Perturbation Tests
-
-Each perturbation module requires unit tests verifying:
-- Input produces expected output
-- Metadata updated correctly
-- Original text preserved
-- Edge cases handled (empty text, no matching entities, Bengali Unicode)
-
-```
-Input:  GDP increased by 5%.
-Output: GDP decreased by 5%.
-Check:  token changed, metadata updated, original preserved
-```
-
-### Validation Tests
-
-- Rule-based filter correctly rejects/accepts samples
-- mDeBERTa filter produces scores in expected range
-- Human validation protocol selects stratified samples
-- Rebalancing maintains class distribution
-
-### Evaluation Tests
-
-- Metrics computed correctly on known inputs
-- Split sizes match specifications
-- Statistical tests produce valid p-values
-- Error analysis produces expected categories
-
-### Performance Targets
-
-- Generate 20,000 samples in under 30 minutes on modern desktop
-- Prefer vectorization over loops
-- Profile before optimizing
+When using Hugging Face dataset downloads, include `repo_type="dataset"` where
+required so the hub does not search model repositories.
 
 ---
 
 ## Data Integrity
 
-- Never overwrite original BENI data
-- Generated datasets are immutable once released
-- Use versioning: `FinFact-BD-v1.0` for the frozen public release; reserve `v1.1+` for future regenerated releases
-- Preserve provenance: every generated sample must track its source, generator version, timestamp, and validation status
-
-### Provenance Fields
-
-Every generated misinformation sample must keep:
-- `sample_id`
-- `original_article_id`
-- `perturbation_type`
-- `original_text`
-- `generated_text`
-- `modified_tokens`
-- `generator_version`
-- `timestamp`
-- `validation_status`
+- Never overwrite original BENI data.
+- Generated releases are immutable once published.
+- Every generated sample must be traceable back to source article and rewrite
+  plan.
+- Train/validation/test splits must be grouped by source article ID to prevent
+  leakage.
+- Do not commit large generated artifacts unless they are intended release
+  artifacts.
+- Record model name, model revision, prompt version, seed, temperature, and
+  verification results for every accepted sample.
 
 ---
 
-## Git Standards
+## Testing Standards
 
-- Meaningful commits
-- Example: `feat: implement numerical_fact_change`, `fix: preserve Bengali unicode digits`
-- Never commit generated artifacts unless intended
+Pipeline tests should cover:
+
+- claim extraction returns sentence-level factual claims
+- ranking applies the documented score formula
+- planner emits structured `RewritePlan` metadata
+- generator receives prompts rather than performing symbolic replacements
+- verifier modules return score/pass/reason records
+- failed verification triggers regeneration
+- exports include required metadata fields
+- workbook is claim-first
+- active package imports no legacy generation code
+
+Tests may use fake model adapters for speed. Fakes belong in tests, not
+production modules.
+
+---
+
+## Paper Writing Standards
+
+The paper should emphasize the scientific contribution, not implementation
+mechanics.
+
+Use this framing:
+
+> FinFact-BD introduces planning-guided claim rewriting for Bangla financial
+> misinformation generation, integrating explicit perturbation planning,
+> constrained local generation, independent verification, regeneration, and full
+> provenance.
+
+Avoid weaker or misleading framing:
+
+- "LLM as executor"
+- "we generated fake news articles"
+- "rule-based perturbation benchmark"
+- "article-level rewriting"
+- "multi-hop perturbation" unless implemented and validated
+
+Every claim must be backed by implementation, experiment, citation, or human
+validation. If the code does not implement it, the paper must not claim it.
 
 ---
 
 ## Agent Behavior
 
 When assigned a task:
-1. Understand which RQ it serves
-2. Review existing implementation
-3. Suggest improvements
-4. Implement modular code
-5. Write tests
-6. Document changes
-7. Identify research implications
 
-Before finishing any task, confirm:
-- Code runs
-- Tests pass
-- Documentation updated
-- Reproducibility maintained
-- Metadata preserved
-- No hidden assumptions
-- Research quality improved
+1. Read the relevant code before making claims.
+2. Identify which RQ or pipeline contract the task serves.
+3. Preserve the planning-guided architecture.
+4. Keep legacy code isolated.
+5. Make modular changes with tests.
+6. Update documentation when architecture or outputs change.
+7. Report remaining assumptions and validation gaps.
+
+Before finishing, confirm:
+
+- code runs or explain why it was not run
+- tests pass or failures are reported
+- metadata/provenance is preserved
+- no hidden fallbacks were added
+- no legacy imports were introduced
+- research claims match implemented code
 
 ---
 
-## Literature
+## Literature Monitoring
 
-Continuously search for:
-- Financial misinformation detection
-- Fake news detection
-- Financial NLP
-- Low-resource NLP
-- Dataset papers
-- ACL benchmark papers
+Continuously track work on:
 
-Report missing citations immediately.
+- Bengali misinformation detection
+- financial misinformation and fact verification
+- adversarial benchmark construction
+- controlled text generation
+- counterfactual data augmentation
+- human validation protocols
+- low-resource financial NLP
+
+Report missing citations or new conflicting evidence immediately.
 
 ---
 
 ## Long-Term Vision
 
-FinFact-BD should become the reference benchmark for Bengali financial misinformation detection. It should enable reproducible evaluation of financial NLP models and serve as a foundation for future work in low-resource financial AI.
+FinFact-BD should become a trusted benchmark for Bengali financial
+misinformation detection. Success is not measured by the number of generated
+samples. It is measured by whether future researchers can reproduce, audit, and
+use the benchmark to understand model behavior.
 
-Success is not measured by downloads. It is measured by whether future papers cite the dataset because they trust it.
-
----
-
-*Last updated: July 14, 2026*
+The benchmark should be localized, auditable, human-legible, and scientifically
+defensible.

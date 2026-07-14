@@ -24,9 +24,9 @@ Twelve weeks from quality filtering to FinNLP Workshop submission. Each week map
 
 ---
 
-## Phase 1: Quality Filtering & Claim-Guided Rewriting (Week 1)
+## Phase 1: Quality Filtering & Planning-Guided Rewriting (Week 1)
 
-Run the claim-guided Bangla rewriting pipeline on Kaggle, then apply mDeBERTa filtering as a downstream quality gate. The generation pipeline now includes built-in multi-stage verification (claim integrity, surface quality, semantic quality), so mDeBERTa filtering acts as an additional safety net rather than the sole quality control step. The generation model (csebuetnlp/banglat5 or Vacaspati/BanglaByT5) rewrites targeted claims under planner control, producing misinformation that is more human-legible than microscopic token replacements.
+Run the planning-guided Bangla rewriting pipeline on Kaggle, then apply mDeBERTa filtering as a downstream quality gate. The generation pipeline now includes built-in multi-stage verification (claim integrity, surface quality, semantic quality), so mDeBERTa filtering acts as an additional safety net rather than the sole quality control step. The generation model (csebuetnlp/banglat5 or Vacaspati/BanglaByT5) rewrites targeted claims under planner control, producing misinformation that is more human-legible than microscopic token replacements.
 
 ### Tasks
 
@@ -34,7 +34,7 @@ Run the claim-guided Bangla rewriting pipeline on Kaggle, then apply mDeBERTa fi
 |------|---------|
 | Implement claim extraction & selection on Kaggle | Extract financial propositions, score by centrality/importance/editability/diversity |
 | Load Bangla generation model on Kaggle T4 | Load csebuetnlp/banglat5 or Vacaspati/BanglaByT5 (~10-15 min generation pass) |
-| Generate claim-guided rewrites | Rewrite targeted claims under planner control, one factual change per sample |
+| Generate planning-guided rewrites | Rewrite targeted claims under planner control, one factual change per sample |
 | Run multi-stage verification | Claim integrity, surface quality, semantic quality checks before acceptance |
 | Run regeneration loop for failed samples | Up to 3 attempts per failed sample, log failure reasons for dropped samples |
 | Export raw, filtered, and metadata files | Write finfact_bd_rewritten_raw.csv, finfact_bd_rewritten_filtered.csv, metadata.json |

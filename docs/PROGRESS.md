@@ -10,17 +10,17 @@
 
 ## Executive Summary
 
-FinFact-BD started as a dataset generation project for Bengali financial misinformation. We've pivoted toward a controlled claim-guided rewriting benchmark. The dataset is a means, not the end. The real contribution is a rigorously validated benchmark with clear research questions, human-annotated ground truth, real-world test cases, and comprehensive model evaluation.
+FinFact-BD started as a dataset generation project for Bengali financial misinformation. We've pivoted toward a controlled planning-guided claim rewriting benchmark. The dataset is a means, not the end. The real contribution is a rigorously validated benchmark with clear research questions, human-annotated ground truth, real-world test cases, and comprehensive model evaluation.
 
 Frozen release: `FinFact-BD-v1.0` regenerated on `2026-07-14`.
 
-**What changed:** We shifted from "generate a dataset and train a classifier" to "build a benchmark that the community can use." This means human validation, difficulty calibration, reasoning labels, real-world examples, and deep error analysis. The generation side moved from rule-based token replacement to claim-guided Bangla rewriting using generation models (csebuetnlp/banglat5, Vacaspati/BanglaByT5). The benchmark construction is where we are now.
+**What changed:** We shifted from "generate a dataset and train a classifier" to "build a benchmark that the community can use." This means human validation, difficulty calibration, reasoning labels, real-world examples, and deep error analysis. The generation side moved from rule-based token replacement to planning-guided Bangla claim rewriting using generation models (csebuetnlp/banglat5, Vacaspati/BanglaByT5). The benchmark construction is where we are now.
 
 **Why this matters:** A dataset without validation is just noise. A benchmark with research questions, human labels, and real-world coverage is a lasting contribution.
 
 **Current state:**
 - Dataset generation (v1): 20K samples created via rule-based perturbation, 10K quality-filtered
-- Dataset generation (v2): Claim-guided Bangla rewriting pipeline planned in `docs/KAGGLE_REWRITE_PLAN.md`
+- Dataset generation (v2): Planning-guided Bangla claim rewriting pipeline planned in `docs/KAGGLE_REWRITE_PLAN.md`
 - Human validation: Protocol designed, 300 samples selected, annotators needed
 - Kaggle rewrite stage: Pipeline design complete, implementation pending
 - Timeline: On track for 12-week submission
@@ -107,9 +107,9 @@ FinFact-BD carries rich metadata per sample. This schema supports every downstre
 | Rule-filtered | 9,981 (99.8% pass rate) |
 | Perturbation types | 5 (numerical fact change, policy reversal, entity replacement, temporal shift, causal inversion) |
 
-### v2: Claim-Guided Bangla Rewriting (Planned)
+### v2: Planning-Guided Bangla Claim Rewriting (Planned)
 
-The v1 rule-based pipeline produced symbolic edits that were often too small to be human-legible in long Bengali financial articles. The v2 pipeline replaces token-level perturbation with claim-guided rewriting using Bangla generation models. The full plan is documented in `docs/KAGGLE_REWRITE_PLAN.md`.
+The v1 rule-based pipeline produced symbolic edits that were often too small to be human-legible in long Bengali financial articles. The v2 pipeline replaces token-level perturbation with planning-guided claim rewriting using Bangla generation models. The full plan is documented in `docs/KAGGLE_REWRITE_PLAN.md`.
 
 **Pipeline stages:**
 
@@ -182,7 +182,7 @@ Final filtered dataset
 - Used as a **filter**, not as the benchmark model
 - Simplifies pipeline without sacrificing quality
 
-**Note on v2 pipeline:** The new claim-guided rewriting pipeline has built-in multi-stage verification (claim integrity, surface quality, semantic quality) that handles quality control during generation. mDeBERTa remains available as an additional downstream filter for further quality assurance if needed, but it is no longer the sole quality gate.
+**Note on v2 pipeline:** The new planning-guided rewriting pipeline has built-in multi-stage verification (claim integrity, surface quality, semantic quality) that handles quality control during generation. mDeBERTa remains available as an additional downstream filter for further quality assurance if needed, but it is no longer the sole quality gate.
 
 **Why human validation is essential for the paper:**
 - Reviewers will ask: "Why should I trust mDeBERTa on Bengali financial text?"
@@ -196,7 +196,7 @@ Final filtered dataset
 
 ### Bugs Fixed During Generation (v1 Rule-Based Pipeline)
 
-> These fixes apply to the old rule-based pipeline (`src/generation/perturbation_pipeline.py`), which is kept for reference. The v2 claim-guided pipeline uses a different generation approach.
+> These fixes apply to the old rule-based pipeline (`src/generation/perturbation_pipeline.py`), which is kept for reference. The v2 planning-guided pipeline uses a different generation approach.
 
 1. `numerical_perturbation` only matched `%` numbers → fixed for plain Bengali digits (31 → 2,100)
 2. `causal_distortion` used silent `.replace()` lambdas → rewritten with regex negation + sentence swap (230 → 2,100)
@@ -562,7 +562,7 @@ This project evolved through several phases. The original vision was a dataset g
 2. **Quality filtering:** Simplified from dual-model ensemble to mDeBERTa-only after testing showed unnecessary complexity
 3. **Benchmark pivot:** Shifted from "dataset announcement" to "rigorous benchmark" after recognizing that human validation and real-world testing are essential for lasting contribution
 4. **Venue change:** Targeting FinNLP Workshop at COLING 2026 (January 2027) instead of standalone paper
-5. **Generation approach shift:** Moved from rule-based token replacement to claim-guided Bangla rewriting using generation models (csebuetnlp/banglat5, Vacaspati/BanglaByT5). The symbolic edits in v1 were controlled and reproducible, but many were too small to be human-legible in long Bengali financial articles. The new approach keeps the claim-level control but uses a generator to realize the change at sentence/paragraph level, making the misinformation more visible to human readers while remaining verifiable against the rewrite plan.
+5. **Generation approach shift:** Moved from rule-based token replacement to planning-guided Bangla claim rewriting using generation models (csebuetnlp/banglat5, Vacaspati/BanglaByT5). The symbolic edits in v1 were controlled and reproducible, but many were too small to be human-legible in long Bengali financial articles. The new approach keeps the claim-level control but constrains a generation model to realize a pre-specified change at sentence/paragraph level, making the misinformation more visible to human readers while remaining verifiable against the rewrite plan.
 
 The original approach (dataset + dual-model filter + train classifier) would have produced a weaker paper. The benchmark approach (human validation + real-world testing + error analysis) produces a stronger contribution.
 

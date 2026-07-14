@@ -132,7 +132,7 @@ FinFact-BD is designed as a controlled experimental setup, not just a dataset re
 
 | Research Question | Experimental Component | What We Evaluate |
 |-------------------|----------------------|------------------|
-| RQ1: Generation model quality | Evaluate claim-guided Bangla rewriting with banglat5, BanglaByT5 | Human-legibility, benchmark quality, verification pass rate |
+| RQ1: Generation model quality | Evaluate planning-guided Bangla claim rewriting with banglat5, BanglaByT5 | Human-legibility, benchmark quality, verification pass rate |
 | RQ2: Hardest claim-rewriting families | Stratified evaluation across 5 claim-rewriting families | Per-family F1 scores, difficulty ranking |
 | RQ3: Financial terminology difficulty | Compare performance on financial vs. general Bengali text | Accuracy gap, error analysis |
 | RQ4: Numerical misinformation across scales | Compare PLMs (110M-395M) vs. LLMs (7B-8B) on numerical fact-change examples | Numerical accuracy, scale vs. performance |
