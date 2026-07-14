@@ -158,6 +158,13 @@ python -m pytest -q
 For Kaggle smoke, pilot, full-run, resume, and output-inspection commands, see
 `docs/KAGGLE_RUN_COMMANDS.md`.
 
+To isolate Kaggle model-access, download, and GPU-load failures before a smoke
+run, use:
+
+```bash
+python scripts/kaggle_preflight.py --config configs/rewrite_pipeline.yaml --download --load --disable-xet
+```
+
 ## Outputs
 
 The exporter writes:

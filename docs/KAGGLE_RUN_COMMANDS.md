@@ -66,6 +66,44 @@ export HF_HOME=/kaggle/temp/huggingface
 
 Do not commit tokens or paste them into repository files.
 
+When using Kaggle Secrets from a notebook, prefer running repository commands
+through Python `subprocess` after setting `os.environ`. A separate `%%bash` cell
+may not inherit secrets set inside the Python kernel.
+
+Reusable notebook runner:
+
+```python
+import os
+import subprocess
+import sys
+from pathlib import Path
+from kaggle_secrets import UserSecretsClient
+
+os.environ["HF_TOKEN"] = UserSecretsClient().get_secret("HF_TOKEN")
+os.environ["HF_HOME"] = "/kaggle/temp/huggingface"
+os.environ["HF_HUB_DISABLE_XET"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+Path("logs").mkdir(exist_ok=True)
+
+def run_logged(cmd, log_path):
+    with open(log_path, "w", encoding="utf-8") as log:
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=os.environ.copy(),
+        )
+        for line in process.stdout:
+            print(line, end="")
+            log.write(line)
+            log.flush()
+        code = process.wait()
+    if code != 0:
+        raise RuntimeError(f"Command failed with exit code {code}: {' '.join(cmd)}")
+```
+
 ## 3. Install Dependencies
 
 ```bash
@@ -140,7 +178,99 @@ PY
 
 ## 6. Hugging Face Access Check
 
-This checks model metadata access without downloading full weights:
+Preferred staged check:
+
+```bash
+python scripts/kaggle_preflight.py \
+  --config configs/rewrite_pipeline.yaml \
+  --log-level INFO \
+  2>&1 | tee logs/model_metadata_preflight.log
+```
+
+Notebook-safe equivalent:
+
+```python
+run_logged(
+    [
+        sys.executable,
+        "scripts/kaggle_preflight.py",
+        "--config",
+        "configs/rewrite_pipeline.yaml",
+        "--log-level",
+        "INFO",
+    ],
+    "logs/model_metadata_preflight.log",
+)
+```
+
+This checks Hugging Face authorization and `config.json` access only. It should
+finish quickly.
+
+Then pre-download the configured model artifacts into the Hugging Face cache:
+
+```bash
+python scripts/kaggle_preflight.py \
+  --config configs/rewrite_pipeline.yaml \
+  --download \
+  --disable-xet \
+  --log-level INFO \
+  2>&1 | tee logs/model_download_preflight.log
+```
+
+Notebook-safe equivalent:
+
+```python
+run_logged(
+    [
+        sys.executable,
+        "scripts/kaggle_preflight.py",
+        "--config",
+        "configs/rewrite_pipeline.yaml",
+        "--download",
+        "--disable-xet",
+        "--log-level",
+        "INFO",
+    ],
+    "logs/model_download_preflight.log",
+)
+```
+
+This separates slow network/cache behavior from pipeline execution. If this is
+where the process stalls, the issue is model download/cache, not claim rewriting.
+
+Finally, load every configured model sequentially:
+
+```bash
+python scripts/kaggle_preflight.py \
+  --config configs/rewrite_pipeline.yaml \
+  --load \
+  --disable-xet \
+  --log-level INFO \
+  2>&1 | tee logs/model_load_preflight.log
+```
+
+Notebook-safe equivalent:
+
+```python
+run_logged(
+    [
+        sys.executable,
+        "scripts/kaggle_preflight.py",
+        "--config",
+        "configs/rewrite_pipeline.yaml",
+        "--load",
+        "--disable-xet",
+        "--log-level",
+        "INFO",
+    ],
+    "logs/model_load_preflight.log",
+)
+```
+
+This reports elapsed time and `nvidia-smi` memory before and after each model
+load. Qwen and Aya are loaded one at a time.
+
+Minimal manual metadata check:
 
 ```bash
 python - <<'PY'
@@ -181,6 +311,33 @@ python scripts/run_rewrite_pipeline.py \
   --seed 42 \
   --log-level INFO \
   2>&1 | tee logs/rewrite_smoke.log
+```
+
+Notebook-safe equivalent:
+
+```python
+import shutil
+
+shutil.rmtree("data/generated/rewrite_generation_smoke", ignore_errors=True)
+run_logged(
+    [
+        sys.executable,
+        "scripts/run_rewrite_pipeline.py",
+        "--config",
+        "configs/rewrite_pipeline.yaml",
+        "--input",
+        "data/finfact_bd/finfact_bd_originals.csv",
+        "--output-dir",
+        "data/generated/rewrite_generation_smoke",
+        "--num-samples",
+        "5",
+        "--seed",
+        "42",
+        "--log-level",
+        "INFO",
+    ],
+    "logs/rewrite_smoke.log",
+)
 ```
 
 The pipeline writes the checkpoint inside the supplied output directory:
