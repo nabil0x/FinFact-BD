@@ -7,6 +7,7 @@ from typing import List
 from src.generation.metadata import Article, GeneratedRewrite, GenerationParams, RewritePlan
 from src.generation.models import GenerationModel
 from src.generation.prompts import PROMPT_VERSION, build_rewrite_prompt
+from src.generation.utils import sentence_spans
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class RewriteGenerator:
         )
         if len(outputs) != 1:
             raise RuntimeError(f"Generation model returned {len(outputs)} outputs for one prompt")
-        rewritten_article = self._clean_output(outputs[0])
+        rewritten_article = self._localize_output(article.text, outputs[0], plan.target_claim.sentence_index)
         if not rewritten_article:
             raise RuntimeError("Generation model returned an empty rewrite")
         logger.info(
@@ -72,7 +73,7 @@ class RewriteGenerator:
             raise RuntimeError(f"Generation model returned {len(outputs)} outputs for {len(prompts)} prompts")
         return [
             GeneratedRewrite(
-                rewritten_article=self._clean_output(output),
+                rewritten_article=self._localize_output(article.text, output, plan.target_claim.sentence_index),
                 prompt=prompt,
                 params=GenerationParams(
                     model_name=self.model.model_name,
@@ -84,7 +85,7 @@ class RewriteGenerator:
                     max_new_tokens=self.max_new_tokens,
                 ),
             )
-            for output, prompt, temperature, seed in zip(outputs, prompts, temperatures, seeds)
+            for article, plan, output, prompt, temperature, seed in zip(articles, plans, outputs, prompts, temperatures, seeds)
         ]
 
     def _clean_output(self, output: str) -> str:
@@ -97,3 +98,22 @@ class RewriteGenerator:
             if text.startswith(prefix):
                 text = text[len(prefix) :].strip()
         return text
+
+    def _localize_output(self, original_article: str, output: str, target_index: int) -> str:
+        cleaned = self._clean_output(output)
+        original_spans = sentence_spans(original_article)
+        if target_index >= len(original_spans):
+            raise RuntimeError(f"Target sentence index {target_index} missing from original article")
+
+        generated_spans = sentence_spans(cleaned)
+        if len(generated_spans) > target_index:
+            rewritten_sentence = generated_spans[target_index].text.strip()
+        elif len(generated_spans) == 1:
+            rewritten_sentence = generated_spans[0].text.strip()
+        else:
+            rewritten_sentence = cleaned.strip()
+        if not rewritten_sentence:
+            raise RuntimeError("Generation model returned an empty target sentence")
+
+        target = original_spans[target_index]
+        return original_article[: target.start] + rewritten_sentence + original_article[target.end :]

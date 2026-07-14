@@ -10,7 +10,9 @@ from src.generation.metadata import Article, SampleRecord
 from src.generation.models import ModelBundle
 from src.generation.perturbation_planner import build_planner
 from src.generation.pipeline import PlanningGuidedRewritePipeline
+from src.generation.rewrite_generator import RewriteGenerator
 from src.generation.utils import extract_json_payload
+from src.generation.verifier import CompositeVerifier, DuplicateVerifier, LocalityVerifier
 
 
 class FakeGenerator:
@@ -266,6 +268,53 @@ def test_llm_planner_parses_structured_json():
     assert plan.target_span == "১০ শতাংশ"
     assert plan.replacement == "৭ শতাংশ"
     assert plan.planner_model == "fake-qwen"
+
+
+def test_rewrite_generator_splices_only_target_sentence():
+    article = Article(
+        article_id="a1",
+        headline="বাংলাদেশ ব্যাংক সুদের হার বাড়িয়েছে",
+        text="বাংলাদেশ ব্যাংক নীতিগত সুদের হার ১০ শতাংশ বাড়িয়েছে। বাজার স্থিতিশীল আছে। বিনিয়োগ বেড়েছে।",
+    )
+    claims = HeuristicClaimExtractor().extract(article)
+    selected = ClaimRanker(ClaimRankingConfig(min_overall_score=0.1, max_risk_score=1.0)).select(article, claims)
+    assert selected is not None
+    plan = build_planner().create_plan(selected)
+
+    class DriftGenerator:
+        model_name = "drifty"
+        model_revision = "test"
+
+        def generate_batch(self, prompts, temperatures, seeds, max_new_tokens):
+            return [
+                "বাংলাদেশ ব্যাংক নীতিগত সুদের হার ৭ শতাংশ বাড়িয়েছে। বাজার অস্থিতিশীল আছে। বিনিয়োগ কমেছে।"
+            ]
+
+    rewritten = RewriteGenerator(DriftGenerator()).rewrite(article, plan, temperature=0.0, seed=1, attempt=1)
+
+    assert rewritten.rewritten_article == "বাংলাদেশ ব্যাংক নীতিগত সুদের হার ৭ শতাংশ বাড়িয়েছে। বাজার স্থিতিশীল আছে। বিনিয়োগ বেড়েছে।"
+    report = CompositeVerifier([LocalityVerifier()]).verify(article, rewritten.rewritten_article, plan)
+    assert report.passed is True
+
+
+def test_duplicate_verifier_tracks_only_accepted_outputs():
+    embedder = FakeEmbedder()
+    duplicate = DuplicateVerifier(embedder=embedder, max_similarity=0.99)
+    article = Article(article_id="a1", headline="h", text="বাংলাদেশ ব্যাংক ১০ শতাংশ বলেছে।")
+    claims = HeuristicClaimExtractor(min_confidence=0.1).extract(article)
+    selected = ClaimRanker(ClaimRankingConfig(min_overall_score=0.1, max_risk_score=1.0)).select(article, claims)
+    assert selected is not None
+    plan = build_planner().create_plan(selected)
+    rewritten = "বাংলাদেশ ব্যাংক ৭ শতাংশ বলেছে।"
+
+    first = duplicate.verify(article, rewritten, plan)
+    second = duplicate.verify(article, rewritten, plan)
+    assert first.passed is True
+    assert second.passed is True
+
+    duplicate.accept(rewritten)
+    third = duplicate.verify(article, rewritten, plan)
+    assert third.passed is False
 
 
 def test_pipeline_runs_end_to_end_with_injected_models(tmp_path):

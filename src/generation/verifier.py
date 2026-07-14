@@ -191,8 +191,6 @@ class DuplicateVerifier:
         max_seen = max((cosine(vector, existing) for existing in self._accepted_vectors), default=0.0)
         passed = max_seen < self.max_similarity
         score = max(0.0, 1.0 - max_seen)
-        if passed:
-            self._accepted_vectors.append(vector)
         return VerifierResult(
             self.name,
             round(score, 4),
@@ -200,6 +198,9 @@ class DuplicateVerifier:
             "passed" if passed else "near_duplicate_in_corpus",
             {"max_seen_similarity": round(max_seen, 4)},
         )
+
+    def accept(self, rewritten: str) -> None:
+        self._accepted_vectors.append(self.embedder.encode([rewritten])[0])
 
 
 @dataclass(frozen=True)
@@ -209,6 +210,11 @@ class CompositeVerifier:
     def verify(self, article: Article, rewritten: str, plan: RewritePlan) -> VerificationReport:
         results = [verifier.verify(article, rewritten, plan) for verifier in self.verifiers]
         report = VerificationReport(results)
+        if report.passed:
+            for verifier in self.verifiers:
+                accept = getattr(verifier, "accept", None)
+                if callable(accept):
+                    accept(rewritten)
         logger.info("Verification passed=%s reasons=%s", report.passed, report.reasons)
         return report
 
