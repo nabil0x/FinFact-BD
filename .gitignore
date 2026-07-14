@@ -32,17 +32,16 @@ Thumbs.db
 .env
 .env.local
 
-# Data (large files - track with DVC or git-lfs if needed)
+# Data — large/raw files excluded, curated dataset tracked via LFS
+# Excluded: combined (492MB), perturbed raw (398MB), train (392MB), rule-filtered raw (108MB)
+data/finfact_bd/finfact_bd_combined.csv
+data/finfact_bd/finfact_bd_perturbed.csv
+data/finfact_bd/finfact_bd_train.csv
+data/finfact_bd/finfact_bd_perturbed_rule_filtered.csv
 data/raw/
 data/generated/
 data/processed/
 data/validated/
-*.csv
-*.csv.zst
-*.parquet
-*.json
-!configs/*.json
-!docs/*.json
 
 # Model artifacts
 models/
