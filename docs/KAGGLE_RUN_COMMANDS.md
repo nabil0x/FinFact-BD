@@ -26,6 +26,7 @@ Secret automatically.
 | `scripts/kaggle_preflight_load.sh` | Load each configured model sequentially on GPU |
 | `scripts/kaggle_preflight_all.sh` | Run metadata, download, and load preflight |
 | `scripts/kaggle_smoke.sh` | Run clean 5-sample smoke generation |
+| `scripts/kaggle_pilot20.sh` | Run clean 20-sample pilot generation |
 | `scripts/kaggle_pilot.sh` | Run clean 100-sample pilot generation |
 | `scripts/kaggle_full.sh` | Run full generation; does not clean by default |
 | `scripts/kaggle_resume.sh` | Resume full generation from checkpoint |
@@ -85,6 +86,13 @@ scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_smoke -
 If smoke passes, run pilot:
 
 ```bash
+scripts/kaggle_pilot20.sh
+scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_pilot20 --fast
+```
+
+If the 20-sample pilot passes, run the larger pilot:
+
+```bash
 scripts/kaggle_pilot.sh
 scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_pilot --fast
 ```
@@ -95,6 +103,19 @@ If pilot passes, run full generation:
 scripts/kaggle_full.sh
 scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_full --fast
 ```
+
+## Expected Model Lifecycle
+
+The pipeline is staged by model role, not by article:
+
+```text
+all pending articles -> Qwen extraction/planning -> release Qwen
+all planned articles -> Aya rewrite/regeneration + independent verification -> release Aya
+```
+
+For a five-sample smoke or a 20-sample pilot, Qwen and Aya should each load once
+per pipeline run. If logs show Qwen or Aya loading once per article, stop the
+run and update the repository before scaling.
 
 Resume interrupted full generation:
 
@@ -118,6 +139,7 @@ python scripts/kaggle_run.py check
 python scripts/kaggle_run.py gpu
 python scripts/kaggle_run.py preflight --stage all
 python scripts/kaggle_run.py smoke
+python scripts/kaggle_run.py pilot --num-samples 20 --output-dir data/generated/rewrite_generation_pilot20
 python scripts/kaggle_run.py pilot
 python scripts/kaggle_run.py full
 python scripts/kaggle_run.py resume
@@ -161,6 +183,12 @@ Smoke:
 
 ```text
 data/generated/rewrite_generation_smoke/
+```
+
+20-sample pilot:
+
+```text
+data/generated/rewrite_generation_pilot20/
 ```
 
 Pilot:

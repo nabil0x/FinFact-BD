@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 from src.generation.claim_extraction import ClaimExtractor, build_claim_extractor
 from src.generation.claim_selection import ClaimRanker, build_claim_ranker
 from src.generation.exporter import DatasetExporter, HumanValidationWorkbookBuilder
-from src.generation.metadata import Article, SampleRecord
+from src.generation.metadata import Article, RankedClaim, RewritePlan, SampleRecord
 from src.generation.models import ModelBundle, build_model_bundle
 from src.generation.perturbation_planner import RewritePlanner, build_planner
 from src.generation.regeneration import RegenerationConfig, RegenerationController
@@ -42,6 +42,14 @@ class ArticleProcessOutcome:
     failure: Optional[Dict[str, Any]] = None
 
 
+@dataclass(frozen=True)
+class PlannedArticle:
+    article: Article
+    selected: RankedClaim
+    plan: RewritePlan
+    sample_seed: int
+
+
 class PlanningGuidedRewritePipeline:
     def __init__(
         self,
@@ -69,23 +77,46 @@ class PlanningGuidedRewritePipeline:
         failures = list(checkpoint.get("failures", []))
         processed = set(checkpoint.get("processed_ids", []))
 
-        for article in articles:
-            if article.article_id in processed:
-                continue
-            try:
-                outcome = self._process_article(article)
-            except Exception as exc:
-                logger.exception("Article processing crashed: %s", article.article_id)
-                failures.append({"article_id": article.article_id, "reason": "exception", "error": str(exc)})
+        pending_articles = [article for article in articles if article.article_id not in processed]
+        planned_articles: List[PlannedArticle] = []
+        logger.info("Planning phase starting pending=%d", len(pending_articles))
+
+        try:
+            for article in pending_articles:
+                try:
+                    plan_outcome = self._plan_article(article)
+                except Exception as exc:
+                    logger.exception("Article planning crashed: %s", article.article_id)
+                    failures.append({"article_id": article.article_id, "reason": "exception", "stage": "planning", "error": str(exc)})
+                    processed.add(article.article_id)
+                    self._save_checkpoint(processed, samples, failures)
+                    continue
+                if isinstance(plan_outcome, ArticleProcessOutcome):
+                    failures.append(plan_outcome.failure or {"article_id": article.article_id, "reason": "unknown_planning_failure"})
+                    processed.add(article.article_id)
+                    self._save_checkpoint(processed, samples, failures)
+                    continue
+                planned_articles.append(plan_outcome)
+        finally:
+            self._release_instruction_models()
+        logger.info("Planning phase complete planned=%d failed=%d", len(planned_articles), len(failures))
+
+        logger.info("Generation phase starting planned=%d", len(planned_articles))
+        try:
+            for planned_article in planned_articles:
+                article = planned_article.article
+                if article.article_id in processed:
+                    continue
+                outcome = self._generate_article(planned_article)
+                if outcome.sample is None:
+                    failures.append(outcome.failure or {"article_id": article.article_id, "reason": "unknown_generation_failure"})
+                else:
+                    samples.append(outcome.sample)
                 processed.add(article.article_id)
                 self._save_checkpoint(processed, samples, failures)
-                continue
-            if outcome.sample is None:
-                failures.append(outcome.failure or {"article_id": article.article_id, "reason": "unknown_failure"})
-            else:
-                samples.append(outcome.sample)
-            processed.add(article.article_id)
-            self._save_checkpoint(processed, samples, failures)
+        finally:
+            self._release_model(self.model_bundle.generator)
+        logger.info("Generation phase complete accepted=%d failed=%d", len(samples), len(failures))
 
         stats = {
             "input_articles": len(articles),
@@ -118,7 +149,7 @@ class PlanningGuidedRewritePipeline:
             regenerator=RegenerationController(generator, verifier, regen_cfg),
         )
 
-    def _process_article(self, article: Article) -> ArticleProcessOutcome:
+    def _plan_article(self, article: Article) -> PlannedArticle | ArticleProcessOutcome:
         claims = self.components.extractor.extract(article)
         selected = self.components.ranker.select(article, claims)
         if selected is None:
@@ -131,12 +162,28 @@ class PlanningGuidedRewritePipeline:
                 }
             )
         plan = self.components.planner.create_plan(selected)
-        self._release_instruction_models()
         sample_seed = self.rng.randint(0, 2**31 - 1)
+        return PlannedArticle(article=article, selected=selected, plan=plan, sample_seed=sample_seed)
+
+    def _generate_article(self, planned: PlannedArticle) -> ArticleProcessOutcome:
+        article = planned.article
+        selected = planned.selected
+        plan = planned.plan
+        sample_seed = planned.sample_seed
         try:
             outcome = self.components.regenerator.run_with_attempts(article, plan, sample_seed)
-        finally:
-            self._release_model(self.model_bundle.generator)
+        except Exception as exc:
+            logger.exception("Article generation crashed: %s", article.article_id)
+            return ArticleProcessOutcome(
+                failure={
+                    "article_id": article.article_id,
+                    "reason": "exception",
+                    "stage": "generation",
+                    "error": str(exc),
+                    "selected_claim": selected.claim.to_dict(),
+                    "rewrite_plan": plan.to_dict(),
+                }
+            )
         if outcome.result is None:
             return ArticleProcessOutcome(
                 failure={
