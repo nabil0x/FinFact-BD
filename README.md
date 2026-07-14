@@ -139,7 +139,7 @@ Run smoke generation:
 
 ```bash
 scripts/kaggle_smoke.sh
-scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_smoke
+scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_smoke --fast
 ```
 
 The production config uses Hugging Face models for extraction, planning,

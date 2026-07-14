@@ -79,21 +79,21 @@ Run smoke generation:
 
 ```bash
 scripts/kaggle_smoke.sh
-scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_smoke
+scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_smoke --fast
 ```
 
 If smoke passes, run pilot:
 
 ```bash
 scripts/kaggle_pilot.sh
-scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_pilot
+scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_pilot --fast
 ```
 
 If pilot passes, run full generation:
 
 ```bash
 scripts/kaggle_full.sh
-scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_full
+scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_full --fast
 ```
 
 Resume interrupted full generation:
@@ -122,6 +122,7 @@ python scripts/kaggle_run.py pilot
 python scripts/kaggle_run.py full
 python scripts/kaggle_run.py resume
 python scripts/kaggle_run.py inspect --output-dir data/generated/rewrite_generation_smoke
+python scripts/kaggle_run.py inspect --output-dir data/generated/rewrite_generation_smoke --fast
 ```
 
 Useful options:
@@ -130,6 +131,7 @@ Useful options:
 python scripts/kaggle_run.py smoke --num-samples 2
 python scripts/kaggle_run.py pilot --num-samples 50
 python scripts/kaggle_run.py full --clean
+python scripts/kaggle_run.py inspect --output-dir data/generated/rewrite_generation_smoke --skip-workbook
 python scripts/kaggle_run.py preflight --stage metadata
 python scripts/kaggle_run.py preflight --stage download
 python scripts/kaggle_run.py preflight --stage load

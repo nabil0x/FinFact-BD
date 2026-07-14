@@ -206,7 +206,12 @@ def inspect(args: argparse.Namespace) -> None:
         print(f"{path.name}\t{human_bytes(path.stat().st_size)}")
     metadata = read_json(output_dir / "metadata.json")
     checkpoint = read_json(output_dir / "checkpoint.json")
-    rows = read_csv(output_dir / "finfact_bd_rewritten.csv")
+    csv_path = output_dir / "finfact_bd_rewritten.csv"
+    if args.fast:
+        rows: list[dict[str, str]] = []
+        csv_count = max(0, count_lines(csv_path) - 1)
+    else:
+        csv_count, rows = read_csv_preview(csv_path, args.preview)
     jsonl_count = count_lines(output_dir / "finfact_bd_rewritten.jsonl")
     samples = checkpoint.get("samples", []) if checkpoint else []
     failures = checkpoint.get("failures", []) if checkpoint else []
@@ -214,7 +219,7 @@ def inspect(args: argparse.Namespace) -> None:
     print(f"metadata_stats: {metadata.get('stats') if metadata else 'missing'}")
     print(f"checkpoint_accepted: {len(samples)}")
     print(f"checkpoint_failures: {len(failures)}")
-    print(f"csv_rows: {len(rows)}")
+    print(f"csv_rows: {csv_count}")
     print(f"jsonl_rows: {jsonl_count}")
     for row in rows[: args.preview]:
         print(
@@ -229,7 +234,10 @@ def inspect(args: argparse.Namespace) -> None:
         print("first_failures:")
         for failure in failures[: args.preview]:
             print(failure)
-    inspect_workbook(output_dir / "human_validation.xlsx", args.preview)
+    if args.fast or args.skip_workbook:
+        print("workbook: skipped")
+    else:
+        inspect_workbook(output_dir / "human_validation.xlsx", args.preview)
 
 
 def read_json(path: Path) -> dict:
@@ -238,11 +246,17 @@ def read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def read_csv(path: Path) -> list[dict[str, str]]:
+def read_csv_preview(path: Path, preview: int) -> tuple[int, list[dict[str, str]]]:
     if not path.exists():
-        return []
+        return 0, []
+    count = 0
+    rows: list[dict[str, str]] = []
     with open(path, "r", encoding="utf-8", newline="") as handle:
-        return list(csv.DictReader(handle))
+        for row in csv.DictReader(handle):
+            count += 1
+            if len(rows) < preview:
+                rows.append(row)
+    return count, rows
 
 
 def count_lines(path: Path) -> int:
@@ -359,6 +373,8 @@ def parse_args() -> argparse.Namespace:
     inspect_parser = sub.add_parser("inspect", help="Inspect exported dataset/checkpoint/workbook.")
     inspect_parser.add_argument("--output-dir", default=OUTPUT_DIRS["smoke"])
     inspect_parser.add_argument("--preview", type=int, default=3)
+    inspect_parser.add_argument("--fast", action="store_true", help="Skip workbook parsing and count CSV rows by line count.")
+    inspect_parser.add_argument("--skip-workbook", action="store_true", help="Skip human_validation.xlsx preview.")
     inspect_parser.set_defaults(func=inspect)
 
     all_parser = sub.add_parser("all-smoke", help="Setup, test, preflight, smoke, and inspect.")
