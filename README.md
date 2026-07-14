@@ -96,8 +96,8 @@ Qwen is used for structured reasoning, Aya is used for Bangla realization, and
 the verifier stack is independent from the generator. This separation is a core
 methodological constraint, not an implementation detail.
 
-For Kaggle T4 runs, the two 8B models are configured with lazy loading and
-`unload_after_call: true` so Qwen and Aya are not resident on GPU at the same
+For Kaggle T4 runs, the two 8B models are configured with lazy loading and are
+released at role boundaries so Qwen and Aya are not resident on GPU at the same
 time. Aya is hosted behind Hugging Face access controls; set `HF_TOKEN` in the
 Kaggle notebook and accept the model license before running the production
 config.

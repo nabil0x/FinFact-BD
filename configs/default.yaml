@@ -60,7 +60,7 @@ models:
     revision: "main"
     load_in_4bit: true
     lazy: true
-    unload_after_call: true
+    unload_after_call: false
     use_chat_template: true
     chat_template_kwargs:
       enable_thinking: false
@@ -73,7 +73,7 @@ models:
     revision: "main"
     load_in_4bit: true
     lazy: true
-    unload_after_call: true
+    unload_after_call: false
     use_chat_template: true
   embedding:
     model_name: "intfloat/multilingual-e5-large"

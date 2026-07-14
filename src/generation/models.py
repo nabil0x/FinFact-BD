@@ -174,10 +174,14 @@ class LazyGenerationModel:
 
     def _load(self) -> GenerationModel:
         if self._model is None:
+            logger.info("Loading lazy generation model %s@%s", self.model_name, self.model_revision)
             cfg = dict(self._config)
             cfg["lazy"] = False
             self._model = _build_generator(cfg, self._device)
         return self._model
+
+    def release(self) -> None:
+        self._unload()
 
     def _unload(self) -> None:
         self._model = None

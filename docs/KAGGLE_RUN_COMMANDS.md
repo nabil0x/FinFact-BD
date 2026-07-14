@@ -425,8 +425,9 @@ PY
 
 CUDA OOM:
 
-- Confirm `lazy: true` and `unload_after_call: true` are present for Qwen and
-  Aya in `configs/rewrite_pipeline.yaml`.
+- Confirm `lazy: true` is present for Qwen and Aya in
+  `configs/rewrite_pipeline.yaml`. The pipeline releases each 8B model at role
+  boundaries so Qwen and Aya are not resident at the same time.
 - Restart the Kaggle kernel to clear fragmented VRAM.
 - Rerun the smoke test before scaling again.
 

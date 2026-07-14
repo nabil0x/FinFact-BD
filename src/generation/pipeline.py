@@ -119,8 +119,12 @@ class PlanningGuidedRewritePipeline:
             logger.warning("No ranked claim passed quality gate for %s", article.article_id)
             return None
         plan = self.components.planner.create_plan(selected)
+        self._release_instruction_models()
         sample_seed = self.rng.randint(0, 2**31 - 1)
-        result = self.components.regenerator.run(article, plan, sample_seed)
+        try:
+            result = self.components.regenerator.run(article, plan, sample_seed)
+        finally:
+            self._release_model(self.model_bundle.generator)
         if result is None:
             return None
         params = result.generation.params
@@ -178,6 +182,18 @@ class PlanningGuidedRewritePipeline:
             return out_dir / "checkpoint.json"
         configured = self.paths.get("checkpoint")
         return Path(configured) if configured else out_dir / "checkpoint.json"
+
+    def _release_instruction_models(self) -> None:
+        seen: set[int] = set()
+        for model in (self.model_bundle.extractor, self.model_bundle.planner):
+            if model is not None and id(model) not in seen:
+                seen.add(id(model))
+                self._release_model(model)
+
+    def _release_model(self, model: object) -> None:
+        release = getattr(model, "release", None)
+        if callable(release):
+            release()
 
     def _load_checkpoint(self) -> Dict[str, Any]:
         if not self.checkpoint_path.exists():
