@@ -19,6 +19,12 @@ class RegenerationResult:
 
 
 @dataclass(frozen=True)
+class RegenerationOutcome:
+    result: Optional[RegenerationResult]
+    attempts: List[AttemptRecord]
+
+
+@dataclass(frozen=True)
 class RegenerationConfig:
     max_attempts: int = 3
     base_temperature: float = 0.4
@@ -32,6 +38,9 @@ class RegenerationController:
     config: RegenerationConfig = RegenerationConfig()
 
     def run(self, article: Article, plan: RewritePlan, seed: int) -> Optional[RegenerationResult]:
+        return self.run_with_attempts(article, plan, seed).result
+
+    def run_with_attempts(self, article: Article, plan: RewritePlan, seed: int) -> RegenerationOutcome:
         attempts: List[AttemptRecord] = []
         for attempt in range(1, self.config.max_attempts + 1):
             temperature = self.config.base_temperature + self.config.temperature_step * (attempt - 1)
@@ -73,7 +82,8 @@ class RegenerationController:
             )
             if report.passed:
                 logger.info("Accepted rewrite article=%s attempt=%d", article.article_id, attempt)
-                return RegenerationResult(generation=generation, verification=report, attempts=attempts)
+                result = RegenerationResult(generation=generation, verification=report, attempts=attempts)
+                return RegenerationOutcome(result=result, attempts=attempts)
             logger.info(
                 "Rejected rewrite article=%s attempt=%d reasons=%s",
                 article.article_id,
@@ -81,4 +91,4 @@ class RegenerationController:
                 report.reasons,
             )
         logger.warning("No passing rewrite after %d attempts for %s", self.config.max_attempts, article.article_id)
-        return None
+        return RegenerationOutcome(result=None, attempts=attempts)

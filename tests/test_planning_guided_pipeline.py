@@ -10,6 +10,7 @@ from src.generation.metadata import Article, SampleRecord
 from src.generation.models import ModelBundle
 from src.generation.perturbation_planner import build_planner
 from src.generation.pipeline import PlanningGuidedRewritePipeline
+from src.generation.utils import extract_json_payload
 
 
 class FakeGenerator:
@@ -58,6 +59,17 @@ class FakeInstructionModel:
 
     def generate_text(self, prompt, temperature, seed, max_new_tokens):
         return self.response
+
+
+class FakeSequenceInstructionModel:
+    model_name = "fake-qwen"
+    model_revision = "test"
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+
+    def generate_text(self, prompt, temperature, seed, max_new_tokens):
+        return self.responses.pop(0)
 
 
 def fake_bundle() -> ModelBundle:
@@ -129,6 +141,47 @@ def test_llm_claim_extractor_parses_structured_json():
     assert claims[0].claim_type == "numerical"
     assert claims[0].claim_text == "Bangladesh Bank reserve reached 27.04B USD"
     assert claims[0].extractor_model == "fake-qwen"
+
+
+def test_extract_json_payload_finds_embedded_json():
+    payload = extract_json_payload('Here is the answer:\n```json\n{"claims": []}\n```\n')
+
+    assert payload == {"claims": []}
+
+
+def test_llm_claim_extractor_repairs_invalid_json():
+    article = Article(
+        article_id="a1",
+        headline="রিজার্ভ বেড়েছে",
+        text="বাংলাদেশ ব্যাংকের রিজার্ভ ২৭.০৪ বিলিয়ন ডলারে পৌঁছেছে।",
+    )
+    model = FakeSequenceInstructionModel(
+        [
+            "আমি JSON দিতে পারছি না।",
+            """
+            {
+              "claims": [
+                {
+                  "sentence_index": 0,
+                  "sentence": "বাংলাদেশ ব্যাংকের রিজার্ভ ২৭.০৪ বিলিয়ন ডলারে পৌঁছেছে।",
+                  "claim": "Bangladesh Bank reserve reached 27.04B USD",
+                  "type": "numeric",
+                  "entities": ["বাংলাদেশ ব্যাংক"],
+                  "numbers": ["২৭.০৪"],
+                  "policies": [],
+                  "dates": [],
+                  "confidence": 0.91
+                }
+              ]
+            }
+            """,
+        ]
+    )
+
+    claims = build_claim_extractor({"backend": "llm_json", "min_confidence": 0.1}, model=model).extract(article)
+
+    assert len(claims) == 1
+    assert claims[0].claim_type == "numerical"
 
 
 def test_llm_planner_parses_structured_json():

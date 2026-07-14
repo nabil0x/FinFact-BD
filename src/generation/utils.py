@@ -141,6 +141,20 @@ def extract_json_payload(text: str) -> Any:
         return json.loads(cleaned)
     except json.JSONDecodeError:
         pass
+    for match in re.finditer(r"```(?:json)?\s*(.*?)```", cleaned, flags=re.DOTALL):
+        try:
+            return json.loads(match.group(1).strip())
+        except json.JSONDecodeError:
+            continue
+    decoder = json.JSONDecoder()
+    for idx, char in enumerate(cleaned):
+        if char not in "{[":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(cleaned[idx:])
+            return payload
+        except json.JSONDecodeError:
+            continue
     candidates = []
     for open_char, close_char in (("{", "}"), ("[", "]")):
         start = cleaned.find(open_char)
@@ -152,4 +166,11 @@ def extract_json_payload(text: str) -> Any:
             return json.loads(candidate)
         except json.JSONDecodeError:
             continue
-    raise ValueError("Model output did not contain valid JSON")
+    raise ValueError(f"Model output did not contain valid JSON; excerpt={compact_excerpt(text)}")
+
+
+def compact_excerpt(text: str, limit: int = 500) -> str:
+    excerpt = " ".join(text.strip().split())
+    if len(excerpt) <= limit:
+        return excerpt
+    return excerpt[:limit] + "..."

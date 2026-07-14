@@ -36,6 +36,12 @@ class PipelineRunResult:
     stats: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class ArticleProcessOutcome:
+    sample: Optional[SampleRecord] = None
+    failure: Optional[Dict[str, Any]] = None
+
+
 class PlanningGuidedRewritePipeline:
     def __init__(
         self,
@@ -67,17 +73,17 @@ class PlanningGuidedRewritePipeline:
             if article.article_id in processed:
                 continue
             try:
-                sample = self._process_article(article)
+                outcome = self._process_article(article)
             except Exception as exc:
                 logger.exception("Article processing crashed: %s", article.article_id)
                 failures.append({"article_id": article.article_id, "reason": "exception", "error": str(exc)})
                 processed.add(article.article_id)
                 self._save_checkpoint(processed, samples, failures)
                 continue
-            if sample is None:
-                failures.append({"article_id": article.article_id, "reason": "no_passing_rewrite"})
+            if outcome.sample is None:
+                failures.append(outcome.failure or {"article_id": article.article_id, "reason": "unknown_failure"})
             else:
-                samples.append(sample)
+                samples.append(outcome.sample)
             processed.add(article.article_id)
             self._save_checkpoint(processed, samples, failures)
 
@@ -112,42 +118,59 @@ class PlanningGuidedRewritePipeline:
             regenerator=RegenerationController(generator, verifier, regen_cfg),
         )
 
-    def _process_article(self, article: Article) -> Optional[SampleRecord]:
+    def _process_article(self, article: Article) -> ArticleProcessOutcome:
         claims = self.components.extractor.extract(article)
         selected = self.components.ranker.select(article, claims)
         if selected is None:
             logger.warning("No ranked claim passed quality gate for %s", article.article_id)
-            return None
+            return ArticleProcessOutcome(
+                failure={
+                    "article_id": article.article_id,
+                    "reason": "no_ranked_claim",
+                    "extracted_claims": [claim.to_dict() for claim in claims],
+                }
+            )
         plan = self.components.planner.create_plan(selected)
         self._release_instruction_models()
         sample_seed = self.rng.randint(0, 2**31 - 1)
         try:
-            result = self.components.regenerator.run(article, plan, sample_seed)
+            outcome = self.components.regenerator.run_with_attempts(article, plan, sample_seed)
         finally:
             self._release_model(self.model_bundle.generator)
-        if result is None:
-            return None
+        if outcome.result is None:
+            return ArticleProcessOutcome(
+                failure={
+                    "article_id": article.article_id,
+                    "reason": "no_passing_rewrite",
+                    "selected_claim": selected.claim.to_dict(),
+                    "rewrite_plan": plan.to_dict(),
+                    "attempts": [attempt.__dict__ for attempt in outcome.attempts],
+                }
+            )
+        result = outcome.result
         params = result.generation.params
         sample_id = stable_sample_id(article.article_id, selected.claim.sentence_index, plan.family, sample_seed)
-        return SampleRecord(
-            sample_id=sample_id,
-            article_id=article.article_id,
-            headline=article.headline,
-            original_article=article.text,
-            rewritten_article=result.generation.rewritten_article,
-            selected_claim=selected.claim.to_dict(),
-            claim_index=selected.claim.sentence_index,
-            claim_type=selected.claim.claim_type,
-            perturbation_family=plan.family,
-            rewrite_plan=plan.to_dict(),
-            generator_model=params.model_name,
-            model_revision=params.model_revision,
-            prompt_version=params.prompt_version,
-            temperature=params.temperature,
-            seed=params.seed,
-            verification_scores=result.verification.to_dict(),
-            regeneration_attempts=len(result.attempts),
-            timestamp=utc_timestamp(),
+        return ArticleProcessOutcome(
+            sample=SampleRecord(
+                sample_id=sample_id,
+                article_id=article.article_id,
+                headline=article.headline,
+                original_article=article.text,
+                rewritten_article=result.generation.rewritten_article,
+                selected_claim=selected.claim.to_dict(),
+                claim_index=selected.claim.sentence_index,
+                claim_type=selected.claim.claim_type,
+                perturbation_family=plan.family,
+                rewrite_plan=plan.to_dict(),
+                generator_model=params.model_name,
+                model_revision=params.model_revision,
+                prompt_version=params.prompt_version,
+                temperature=params.temperature,
+                seed=params.seed,
+                verification_scores=result.verification.to_dict(),
+                regeneration_attempts=len(result.attempts),
+                timestamp=utc_timestamp(),
+            )
         )
 
     def _load_articles(self, path: Path, num_samples: Optional[int]) -> List[Article]:

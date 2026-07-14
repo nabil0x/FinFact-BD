@@ -120,12 +120,16 @@ class HuggingFaceCausalLMGenerator:
             inputs = self._tokenizer(formatted, return_tensors="pt", truncation=True, max_length=4096)
             inputs = {key: value.to(self._model.device) for key, value in inputs.items()}
             with self._torch.no_grad():
+                generate_kwargs: Dict[str, Any] = {
+                    "max_new_tokens": max_new_tokens,
+                    "do_sample": temperature > 0.0,
+                    "pad_token_id": self._tokenizer.pad_token_id,
+                }
+                if temperature > 0.0:
+                    generate_kwargs["temperature"] = max(temperature, 1e-5)
                 ids = self._model.generate(
                     **inputs,
-                    max_new_tokens=max_new_tokens,
-                    do_sample=temperature > 0.0,
-                    temperature=max(temperature, 1e-5),
-                    pad_token_id=self._tokenizer.pad_token_id,
+                    **generate_kwargs,
                 )
             prompt_len = inputs["input_ids"].shape[-1]
             outputs.append(self._tokenizer.decode(ids[0][prompt_len:], skip_special_tokens=True).strip())

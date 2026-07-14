@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Protocol
 
 from src.generation.metadata import RankedClaim, RewritePlan
 from src.generation.models import InstructionModel
-from src.generation.prompts import build_planning_prompt
+from src.generation.prompts import PLANNING_SCHEMA, build_json_repair_prompt, build_planning_prompt
 from src.generation.utils import extract_json_payload
 
 logger = logging.getLogger(__name__)
@@ -116,11 +116,12 @@ class LLMPerturbationPlanner:
     max_new_tokens: int = 768
     temperature: float = 0.0
     seed: int = 42
+    json_repair_attempts: int = 1
 
     def create_plan(self, ranked_claim: RankedClaim) -> RewritePlan:
         prompt = build_planning_prompt(ranked_claim, self.allowed_families)
         raw = self.model.generate_text(prompt, self.temperature, self.seed, self.max_new_tokens)
-        payload = extract_json_payload(raw)
+        payload = self._extract_payload(raw)
         if not isinstance(payload, dict):
             raise ValueError("Planner JSON must be an object")
         family = self._family(payload)
@@ -140,6 +141,26 @@ class LLMPerturbationPlanner:
             raise ValueError("Planner JSON must include edit_instruction, expected_change, and target_span")
         logger.info("LLM planned %s rewrite for sentence %d", family, ranked_claim.claim.sentence_index)
         return plan
+
+    def _extract_payload(self, raw: str) -> object:
+        try:
+            return extract_json_payload(raw)
+        except ValueError as first_error:
+            last_error: Exception = first_error
+        for attempt in range(1, self.json_repair_attempts + 1):
+            repair_prompt = build_json_repair_prompt("rewrite planning", PLANNING_SCHEMA, raw)
+            repaired = self.model.generate_text(
+                repair_prompt,
+                0.0,
+                self.seed + 1000 + attempt,
+                self.max_new_tokens,
+            )
+            try:
+                return extract_json_payload(repaired)
+            except ValueError as exc:
+                last_error = exc
+                raw = repaired
+        raise ValueError(f"Planner did not return valid JSON after repair: {last_error}")
 
     def _family(self, payload: Dict[str, Any]) -> str:
         family = str(payload.get("family") or payload.get("type") or "").strip()
@@ -195,6 +216,7 @@ def build_planner(
             max_new_tokens=int(cfg.get("max_new_tokens", 768)),
             temperature=float(cfg.get("temperature", 0.0)),
             seed=int(cfg.get("seed", 42)),
+            json_repair_attempts=int(cfg.get("json_repair_attempts", 1)),
         )
     if backend != "heuristic":
         raise ValueError(f"Unsupported planner backend: {backend}")

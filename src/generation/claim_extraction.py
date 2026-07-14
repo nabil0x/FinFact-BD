@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Protocol
 
 from src.generation.metadata import Article, Claim
 from src.generation.models import InstructionModel
-from src.generation.prompts import build_claim_extraction_prompt
+from src.generation.prompts import CLAIM_EXTRACTION_SCHEMA, build_claim_extraction_prompt, build_json_repair_prompt
 from src.generation.utils import (
     CAUSAL_TERMS,
     contains_financial_language,
@@ -114,17 +114,65 @@ class LLMClaimExtractor:
     temperature: float = 0.0
     seed: int = 42
     min_confidence: float = 0.35
+    max_sentences: int = 80
+    json_repair_attempts: int = 1
 
     def extract(self, article: Article) -> List[Claim]:
-        prompt = build_claim_extraction_prompt(article, self.max_claims)
+        prompt_article = self._prompt_article(article)
+        prompt = build_claim_extraction_prompt(prompt_article, self.max_claims)
         raw = self.model.generate_text(prompt, self.temperature, self.seed, self.max_new_tokens)
-        payload = extract_json_payload(raw)
+        payload = self._extract_payload(raw)
         rows = payload.get("claims", payload) if isinstance(payload, dict) else payload
         if not isinstance(rows, list):
             raise ValueError("Claim extractor JSON must be a list or object with a claims list")
-        claims = [claim for claim in (self._claim_from_row(row) for row in rows) if claim is not None]
+        claims: List[Claim] = []
+        invalid_rows = 0
+        for row in rows:
+            try:
+                claim = self._claim_from_row(row)
+            except (KeyError, TypeError, ValueError) as exc:
+                invalid_rows += 1
+                logger.warning("Skipping malformed extracted claim for article=%s error=%s row=%s", article.article_id, exc, row)
+                continue
+            if claim is not None:
+                claims.append(claim)
+        if invalid_rows:
+            logger.warning("Skipped %d malformed claim rows for article %s", invalid_rows, article.article_id)
         logger.info("LLM extracted %d claim candidates for article %s", len(claims), article.article_id)
         return claims[: self.max_claims]
+
+    def _prompt_article(self, article: Article) -> Article:
+        spans = sentence_spans(article.text)
+        if len(spans) <= self.max_sentences:
+            return article
+        clipped = " ".join(span.text for span in spans[: self.max_sentences])
+        logger.info(
+            "Clipped article=%s for extraction from %d to %d sentences",
+            article.article_id,
+            len(spans),
+            self.max_sentences,
+        )
+        return Article(article.article_id, article.headline, clipped, article.metadata)
+
+    def _extract_payload(self, raw: str) -> object:
+        try:
+            return extract_json_payload(raw)
+        except ValueError as first_error:
+            last_error: Exception = first_error
+        for attempt in range(1, self.json_repair_attempts + 1):
+            repair_prompt = build_json_repair_prompt("claim extraction", CLAIM_EXTRACTION_SCHEMA, raw)
+            repaired = self.model.generate_text(
+                repair_prompt,
+                0.0,
+                self.seed + 1000 + attempt,
+                self.max_new_tokens,
+            )
+            try:
+                return extract_json_payload(repaired)
+            except ValueError as exc:
+                last_error = exc
+                raw = repaired
+        raise ValueError(f"Claim extraction did not return valid JSON after repair: {last_error}")
 
     def _claim_from_row(self, row: Any) -> Claim | None:
         if not isinstance(row, dict):
@@ -189,6 +237,8 @@ def build_claim_extractor(
             temperature=float(cfg.get("temperature", 0.0)),
             seed=int(cfg.get("seed", 42)),
             min_confidence=float(cfg.get("min_confidence", 0.35)),
+            max_sentences=int(cfg.get("max_sentences", 80)),
+            json_repair_attempts=int(cfg.get("json_repair_attempts", 1)),
         )
     if backend != "heuristic":
         raise ValueError(f"Unsupported claim extraction backend: {backend}")

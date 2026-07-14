@@ -20,6 +20,7 @@ claim_extraction:
   max_new_tokens: 1536
   temperature: 0.0
   seed: 42
+  json_repair_attempts: 1
 
 claim_ranking:
   min_overall_score: 0.52
@@ -36,6 +37,7 @@ planner:
   max_new_tokens: 768
   temperature: 0.0
   seed: 43
+  json_repair_attempts: 1
 
 generation:
   max_new_tokens: 1024
