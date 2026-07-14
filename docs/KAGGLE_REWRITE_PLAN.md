@@ -25,7 +25,9 @@ Use separate models for separate roles:
 | Contradiction | `MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7` |
 | Bangla language quality | `csebuetnlp/banglabert` |
 
-Run the 8B models sequentially in 4-bit quantization on Kaggle. Qwen performs structured reasoning only; Aya performs Bangla realization only. The generation model is for planned local realization, not for choosing misinformation or inventing articles.
+Run the 8B models sequentially in 4-bit quantization on Kaggle. Qwen performs structured reasoning only; Aya performs Bangla realization only. The default config lazy-loads Qwen and Aya and unloads them after each role call, so they are not resident on GPU at the same time. The generation model is for planned local realization, not for choosing misinformation or inventing articles.
+
+Aya Expanse is access controlled on Hugging Face. Before running the production notebook, accept the model terms and expose `HF_TOKEN` as a Kaggle secret.
 
 ## Kaggle notebook stages
 

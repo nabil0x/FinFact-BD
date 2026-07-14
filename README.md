@@ -89,12 +89,18 @@ No model is asked to extract, plan, generate, and verify at the same time.
 | Controlled rewrite | `CohereLabs/aya-expanse-8b` | Rewrite the planned local claim in fluent Bangla |
 | Semantic similarity | `intfloat/multilingual-e5-large` | Check that the article remains globally close to the source |
 | Contradiction | `MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7` | Check claim-level contradiction / intended change |
-| Language quality | `csebuetnlp/banglabert` | Masked-LM fluency signal for Bangla language quality |
+| Language quality | `csebuetnlp/banglabert` | ELECTRA discriminator signal for Bangla language quality |
 | Locality and hallucination | deterministic checks | Detect sentence drift and unplanned entities, numbers, dates, and organizations |
 
 Qwen is used for structured reasoning, Aya is used for Bangla realization, and
 the verifier stack is independent from the generator. This separation is a core
 methodological constraint, not an implementation detail.
+
+For Kaggle T4 runs, the two 8B models are configured with lazy loading and
+`unload_after_call: true` so Qwen and Aya are not resident on GPU at the same
+time. Aya is hosted behind Hugging Face access controls; set `HF_TOKEN` in the
+Kaggle notebook and accept the model license before running the production
+config.
 
 ## Rewrite Families
 
@@ -113,7 +119,7 @@ details:
 - locality
 - multilingual-e5 semantic similarity
 - mDeBERTa-XNLI contradiction
-- BanglaBERT masked-LM language quality / fluency
+- BanglaBERT ELECTRA language quality / fluency
 - journalistic style
 - hallucination/new-fact detection
 - corpus-level embedding duplicate detection
@@ -148,6 +154,9 @@ Run tests:
 ```bash
 python -m pytest -q
 ```
+
+For Kaggle smoke, pilot, full-run, resume, and output-inspection commands, see
+`docs/KAGGLE_RUN_COMMANDS.md`.
 
 ## Outputs
 

@@ -58,7 +58,7 @@ Each article is decomposed into sentence-level financial propositions. The gener
 
 ### 3. Role-specific model allocation
 
-The implementation deliberately assigns different model families to different cognitive roles. Qwen3-8B extracts factual claims and emits structured rewrite plans. Aya Expanse 8B performs the constrained local Bangla rewrite. multilingual-e5-large measures article-level semantic similarity, mDeBERTa-XNLI checks contradiction between the original and rewritten target claim, and BanglaBERT provides a masked-LM language-quality signal. Deterministic checks enforce locality and hallucination constraints.
+The implementation deliberately assigns different model families to different cognitive roles. Qwen3-8B extracts factual claims and emits structured rewrite plans. Aya Expanse 8B performs the constrained local Bangla rewrite. multilingual-e5-large measures article-level semantic similarity, mDeBERTa-XNLI checks contradiction between the original and rewritten target claim, and BanglaBERT provides an ELECTRA discriminator language-quality signal. Deterministic checks enforce locality and hallucination constraints.
 
 ### 4. Constrained Bangla generation model rewriting
 

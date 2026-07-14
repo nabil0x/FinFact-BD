@@ -61,54 +61,6 @@ class ModelBundle:
     planner: Optional[InstructionModel] = None
 
 
-class HuggingFaceSeq2SeqGenerator:
-    def __init__(self, model_name: str, revision: str = "main", device: str = "cuda") -> None:
-        try:
-            import torch
-            from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-        except ImportError as exc:
-            raise ImportError("Install torch and transformers to use hf_seq2seq generation") from exc
-        self.model_name = model_name
-        self.model_revision = revision
-        self._torch = torch
-        self._device = torch.device(device if device == "cuda" and torch.cuda.is_available() else "cpu")
-        self._tokenizer = AutoTokenizer.from_pretrained(model_name, revision=revision)
-        self._model = AutoModelForSeq2SeqLM.from_pretrained(model_name, revision=revision).to(self._device)
-        self._model.eval()
-        logger.info("Loaded seq2seq generator %s@%s on %s", model_name, revision, self._device)
-
-    def generate_batch(
-        self,
-        prompts: List[str],
-        temperatures: List[float],
-        seeds: List[int],
-        max_new_tokens: int,
-    ) -> List[str]:
-        outputs: List[str] = []
-        for prompt, temperature, seed in zip(prompts, temperatures, seeds):
-            self._torch.manual_seed(seed)
-            inputs = self._tokenizer(
-                prompt,
-                return_tensors="pt",
-                truncation=True,
-                max_length=1024,
-            ).to(self._device)
-            with self._torch.no_grad():
-                ids = self._model.generate(
-                    **inputs,
-                    max_new_tokens=max_new_tokens,
-                    do_sample=temperature > 0.0,
-                    temperature=max(temperature, 1e-5),
-                    num_beams=1 if temperature > 0.0 else 4,
-                    early_stopping=True,
-                )
-            outputs.append(self._tokenizer.decode(ids[0], skip_special_tokens=True).strip())
-        return outputs
-
-    def generate_text(self, prompt: str, temperature: float, seed: int, max_new_tokens: int) -> str:
-        return self.generate_batch([prompt], [temperature], [seed], max_new_tokens)[0]
-
-
 class HuggingFaceCausalLMGenerator:
     def __init__(
         self,
@@ -117,6 +69,7 @@ class HuggingFaceCausalLMGenerator:
         device: str = "cuda",
         load_in_4bit: bool = False,
         use_chat_template: bool = True,
+        chat_template_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
         try:
             import torch
@@ -127,6 +80,7 @@ class HuggingFaceCausalLMGenerator:
         self.model_revision = revision
         self._torch = torch
         self._use_chat_template = use_chat_template
+        self._chat_template_kwargs = chat_template_kwargs or {}
         self._device = torch.device(device if device == "cuda" and torch.cuda.is_available() else "cpu")
         self._tokenizer = AutoTokenizer.from_pretrained(model_name, revision=revision, trust_remote_code=True)
         kwargs: Dict[str, Any] = {"revision": revision, "trust_remote_code": True}
@@ -183,22 +137,75 @@ class HuggingFaceCausalLMGenerator:
     def _format_prompt(self, prompt: str) -> str:
         if self._use_chat_template and getattr(self._tokenizer, "chat_template", None):
             messages = [{"role": "user", "content": prompt}]
-            return self._tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            return self._tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                **self._chat_template_kwargs,
+            )
         return prompt
 
 
+class LazyGenerationModel:
+    def __init__(self, config: Dict[str, object], device: str) -> None:
+        self._config = dict(config)
+        self._device = device
+        self._model: Optional[GenerationModel] = None
+        self._unload_after_call = bool(self._config.get("unload_after_call", False))
+        self.model_name = str(self._config["model_name"])
+        self.model_revision = str(self._config.get("revision", "main"))
+
+    def generate_batch(
+        self,
+        prompts: List[str],
+        temperatures: List[float],
+        seeds: List[int],
+        max_new_tokens: int,
+    ) -> List[str]:
+        model = self._load()
+        try:
+            return model.generate_batch(prompts, temperatures, seeds, max_new_tokens)
+        finally:
+            if self._unload_after_call:
+                self._unload()
+
+    def generate_text(self, prompt: str, temperature: float, seed: int, max_new_tokens: int) -> str:
+        return self.generate_batch([prompt], [temperature], [seed], max_new_tokens)[0]
+
+    def _load(self) -> GenerationModel:
+        if self._model is None:
+            cfg = dict(self._config)
+            cfg["lazy"] = False
+            self._model = _build_generator(cfg, self._device)
+        return self._model
+
+    def _unload(self) -> None:
+        self._model = None
+        try:
+            import gc
+            import torch
+
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            return
+
+
 class SentenceTransformersEmbeddingModel:
-    def __init__(self, model_name: str, device: str = "cuda") -> None:
+    def __init__(self, model_name: str, device: str = "cuda", prefix: str = "") -> None:
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:
             raise ImportError("Install sentence-transformers for embedding verification") from exc
         self.model_name = model_name
+        self._prefix = prefix
         self._model = SentenceTransformer(model_name, device=device)
         logger.info("Loaded embedding model %s", model_name)
 
     def encode(self, texts: List[str]) -> List[List[float]]:
-        vectors = self._model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+        inputs = [f"{self._prefix}{text}" if self._prefix else text for text in texts]
+        vectors = self._model.encode(inputs, normalize_embeddings=True, show_progress_bar=False)
         return [list(map(float, vector)) for vector in vectors]
 
 
@@ -261,52 +268,40 @@ class CausalLMFluencyModel:
         return float(math.exp(min(20.0, loss.item())))
 
 
-class MaskedLMFluencyModel:
+class ElectraDiscriminatorQualityModel:
     def __init__(
         self,
         model_name: str,
         revision: str = "main",
         device: str = "cuda",
-        max_masked_tokens: int = 96,
     ) -> None:
         try:
             import torch
-            from transformers import AutoModelForMaskedLM, AutoTokenizer
+            from transformers import AutoModelForPreTraining, AutoTokenizer
         except ImportError as exc:
-            raise ImportError("Install torch and transformers for masked-LM fluency verification") from exc
+            raise ImportError("Install torch and transformers for ELECTRA language-quality verification") from exc
+        try:
+            from normalizer import normalize
+        except ImportError as exc:
+            raise ImportError("Install csebuetnlp normalizer for BanglaBERT language-quality verification") from exc
         self.model_name = model_name
         self._torch = torch
-        self._max_masked_tokens = max_masked_tokens
+        self._normalize = normalize
         self._device = torch.device(device if device == "cuda" and torch.cuda.is_available() else "cpu")
         self._tokenizer = AutoTokenizer.from_pretrained(model_name, revision=revision)
-        self._model = AutoModelForMaskedLM.from_pretrained(model_name, revision=revision).to(self._device)
-        if self._tokenizer.mask_token_id is None:
-            raise ValueError(f"Masked-LM fluency model lacks a mask token: {model_name}")
+        self._model = AutoModelForPreTraining.from_pretrained(model_name, revision=revision).to(self._device)
         self._model.eval()
-        logger.info("Loaded masked-LM fluency model %s@%s", model_name, revision)
+        logger.info("Loaded ELECTRA quality model %s@%s", model_name, revision)
 
     def perplexity(self, text: str) -> float:
-        inputs = self._tokenizer(text, return_tensors="pt", truncation=True, max_length=256).to(self._device)
-        ids = inputs["input_ids"][0]
-        special_ids = set(self._tokenizer.all_special_ids)
-        candidate_positions = [idx for idx, token_id in enumerate(ids.tolist()) if token_id not in special_ids]
-        candidate_positions = candidate_positions[: self._max_masked_tokens]
-        if not candidate_positions:
-            return 999.0
-        losses = []
+        normalized = self._normalize(text)
+        inputs = self._tokenizer(normalized, return_tensors="pt", truncation=True, max_length=512).to(self._device)
         with self._torch.no_grad():
-            for idx in candidate_positions:
-                masked = ids.clone()
-                labels = self._torch.full_like(masked, -100)
-                labels[idx] = ids[idx]
-                masked[idx] = self._tokenizer.mask_token_id
-                loss = self._model(
-                    input_ids=masked.unsqueeze(0),
-                    attention_mask=inputs["attention_mask"],
-                    labels=labels.unsqueeze(0),
-                ).loss
-                losses.append(float(loss.item()))
-        return float(math.exp(min(20.0, sum(losses) / len(losses))))
+            logits = self._model(**inputs).logits
+            fake_probs = self._torch.sigmoid(logits)
+            mask = inputs["attention_mask"].bool()
+            mean_fake = fake_probs[mask].mean().item()
+        return float(1.0 + 300.0 * mean_fake)
 
 
 def build_model_bundle(config: Dict[str, object]) -> ModelBundle:
@@ -319,7 +314,11 @@ def build_model_bundle(config: Dict[str, object]) -> ModelBundle:
     extractor = _build_optional_instruction_model(dict(config.get("extractor", {})), device, {})
     shared = {"extractor": extractor}
     planner = _build_optional_instruction_model(dict(config.get("planner", {})), device, shared)
-    embedder = SentenceTransformersEmbeddingModel(str(embedding_cfg["model_name"]), device=device)
+    embedder = SentenceTransformersEmbeddingModel(
+        str(embedding_cfg["model_name"]),
+        device=device,
+        prefix=str(embedding_cfg.get("prefix", "")),
+    )
     nli = TransformersNLIModel(
         str(nli_cfg["model_name"]),
         revision=str(nli_cfg.get("revision", "main")),
@@ -337,13 +336,9 @@ def build_model_bundle(config: Dict[str, object]) -> ModelBundle:
 
 
 def _build_generator(config: Dict[str, object], device: str) -> GenerationModel:
-    backend = str(config.get("backend", "hf_seq2seq"))
-    if backend == "hf_seq2seq":
-        return HuggingFaceSeq2SeqGenerator(
-            str(config["model_name"]),
-            revision=str(config.get("revision", "main")),
-            device=device,
-        )
+    if bool(config.get("lazy", False)):
+        return LazyGenerationModel(config, device)
+    backend = str(config.get("backend", "hf_causal_lm"))
     if backend == "hf_causal_lm":
         return HuggingFaceCausalLMGenerator(
             str(config["model_name"]),
@@ -351,6 +346,7 @@ def _build_generator(config: Dict[str, object], device: str) -> GenerationModel:
             device=device,
             load_in_4bit=bool(config.get("load_in_4bit", False)),
             use_chat_template=bool(config.get("use_chat_template", True)),
+            chat_template_kwargs=dict(config.get("chat_template_kwargs", {})),
         )
     raise ValueError(f"Unsupported generator backend: {backend}")
 
@@ -363,12 +359,11 @@ def _build_fluency_model(config: Dict[str, object], device: str) -> FluencyModel
             revision=str(config.get("revision", "main")),
             device=device,
         )
-    if backend == "hf_masked_lm":
-        return MaskedLMFluencyModel(
+    if backend == "hf_electra_discriminator":
+        return ElectraDiscriminatorQualityModel(
             str(config["model_name"]),
             revision=str(config.get("revision", "main")),
             device=device,
-            max_masked_tokens=int(config.get("max_masked_tokens", 96)),
         )
     raise ValueError(f"Unsupported fluency backend: {backend}")
 

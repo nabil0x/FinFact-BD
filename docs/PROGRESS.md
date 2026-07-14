@@ -213,7 +213,7 @@ Final filtered dataset
 - `CohereLabs/aya-expanse-8b` — Controlled local Bangla rewrite model
 - `intfloat/multilingual-e5-large` — Semantic similarity verifier
 - `MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7` — NLI contradiction verifier
-- `csebuetnlp/banglabert` — Bangla masked-LM language-quality verifier
+- `csebuetnlp/banglabert` — Bangla ELECTRA discriminator language-quality verifier
 
 **v1 Pipeline (Rule-Based — kept for reference):**
 - `src/generation/perturbation_pipeline.py` — Old rule-based generation script (563 lines)

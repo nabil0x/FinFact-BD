@@ -59,7 +59,11 @@ models:
     model_name: "Qwen/Qwen3-8B"
     revision: "main"
     load_in_4bit: true
+    lazy: true
+    unload_after_call: true
     use_chat_template: true
+    chat_template_kwargs:
+      enable_thinking: false
   planner:
     enabled: true
     share_with: "extractor"
@@ -68,17 +72,19 @@ models:
     model_name: "CohereLabs/aya-expanse-8b"
     revision: "main"
     load_in_4bit: true
+    lazy: true
+    unload_after_call: true
     use_chat_template: true
   embedding:
     model_name: "intfloat/multilingual-e5-large"
+    prefix: "passage: "
   nli:
     model_name: "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
     revision: "main"
   fluency:
-    backend: "hf_masked_lm"
+    backend: "hf_electra_discriminator"
     model_name: "csebuetnlp/banglabert"
     revision: "main"
-    max_masked_tokens: 96
 
 human_validation:
   enabled: true

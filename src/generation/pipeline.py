@@ -55,6 +55,8 @@ class PlanningGuidedRewritePipeline:
     def run(self, input_csv: Optional[str] = None, output_dir: Optional[str] = None, num_samples: Optional[int] = None) -> PipelineRunResult:
         input_path = Path(input_csv or self.paths.get("input_csv", ""))
         out_dir = Path(output_dir or self.paths.get("output_dir", "data/generated/rewrite_generation"))
+        self.checkpoint_path = self._checkpoint_for_run(out_dir, output_dir is not None)
+        logger.info("Using output_dir=%s checkpoint=%s", out_dir, self.checkpoint_path)
         articles = self._load_articles(input_path, num_samples)
         checkpoint = self._load_checkpoint()
         samples = [SampleRecord(**row) for row in checkpoint.get("samples", [])]
@@ -170,6 +172,12 @@ class PlanningGuidedRewritePipeline:
                     break
         logger.info("Loaded %d articles from %s", len(articles), path)
         return articles
+
+    def _checkpoint_for_run(self, out_dir: Path, output_dir_overridden: bool) -> Path:
+        if output_dir_overridden:
+            return out_dir / "checkpoint.json"
+        configured = self.paths.get("checkpoint")
+        return Path(configured) if configured else out_dir / "checkpoint.json"
 
     def _load_checkpoint(self) -> Dict[str, Any]:
         if not self.checkpoint_path.exists():

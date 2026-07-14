@@ -196,14 +196,17 @@ def test_pipeline_runs_end_to_end_with_injected_models(tmp_path):
         "human_validation": {"enabled": False},
     }
 
-    result = PlanningGuidedRewritePipeline(config, model_bundle=fake_bundle()).run()
+    override_dir = tmp_path / "override"
+    result = PlanningGuidedRewritePipeline(config, model_bundle=fake_bundle()).run(output_dir=str(override_dir))
 
     assert len(result.samples) == 1
     sample = result.samples[0]
     assert "৭ শতাংশ" in sample.rewritten_article
     assert sample.verification_scores["passed"] is True
-    assert (tmp_path / "out" / "finfact_bd_rewritten.csv").exists()
-    assert (tmp_path / "out" / "metadata.json").exists()
+    assert (override_dir / "finfact_bd_rewritten.csv").exists()
+    assert (override_dir / "metadata.json").exists()
+    assert (override_dir / "checkpoint.json").exists()
+    assert not (tmp_path / "out" / "checkpoint.json").exists()
 
 
 def test_human_validation_workbook_is_claim_first(tmp_path):
