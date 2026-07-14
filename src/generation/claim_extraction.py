@@ -122,9 +122,12 @@ class LLMClaimExtractor:
         prompt = build_claim_extraction_prompt(prompt_article, self.max_claims)
         raw = self.model.generate_text(prompt, self.temperature, self.seed, self.max_new_tokens)
         payload = self._extract_payload(raw)
-        rows = payload.get("claims", payload) if isinstance(payload, dict) else payload
-        if not isinstance(rows, list):
-            raise ValueError("Claim extractor JSON must be a list or object with a claims list")
+        rows = self._rows_from_payload(payload)
+        if rows is None:
+            payload = self._repair_payload(raw, "claim extraction JSON had the wrong top-level shape")
+            rows = self._rows_from_payload(payload)
+        if rows is None:
+            raise ValueError("Claim extractor JSON must be a list, a claim object, or an object with a claims list")
         claims: List[Claim] = []
         invalid_rows = 0
         for row in rows:
@@ -174,23 +177,67 @@ class LLMClaimExtractor:
                 raw = repaired
         raise ValueError(f"Claim extraction did not return valid JSON after repair: {last_error}")
 
+    def _repair_payload(self, raw: str, reason: str) -> object:
+        last_error: Exception = ValueError(reason)
+        for attempt in range(1, self.json_repair_attempts + 1):
+            repair_prompt = build_json_repair_prompt("claim extraction", CLAIM_EXTRACTION_SCHEMA, raw)
+            repaired = self.model.generate_text(
+                repair_prompt,
+                0.0,
+                self.seed + 2000 + attempt,
+                self.max_new_tokens,
+            )
+            try:
+                return extract_json_payload(repaired)
+            except ValueError as exc:
+                last_error = exc
+                raw = repaired
+        raise ValueError(f"Claim extraction JSON shape repair failed: {last_error}")
+
+    def _rows_from_payload(self, payload: object) -> List[Any] | None:
+        if isinstance(payload, list):
+            return payload
+        if not isinstance(payload, dict):
+            return None
+        for key in ("claims", "factual_claims", "candidate_claims", "claim_candidates", "propositions", "facts"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+            if isinstance(value, dict):
+                return [value]
+        if isinstance(payload.get("claim"), dict):
+            return [payload["claim"]]
+        if any(key in payload for key in ("sentence", "sentence_index", "claim_type", "type")):
+            return [payload]
+        values = list(payload.values())
+        if values and all(isinstance(value, dict) for value in values):
+            return values
+        return None
+
     def _claim_from_row(self, row: Any) -> Claim | None:
         if not isinstance(row, dict):
             raise ValueError("Each extracted claim must be a JSON object")
-        confidence = float(row.get("confidence", 0.0))
+        confidence = float(row.get("confidence", 0.55))
         if confidence < self.min_confidence:
             return None
         sentence = str(row.get("sentence", "")).strip()
         if not sentence:
             raise ValueError("Extracted claim is missing sentence")
+        entities = self._list(row.get("entities"))
+        numbers = self._list(row.get("numbers"))
+        policies = self._list(row.get("policies"))
+        dates = self._list(row.get("dates"))
+        claim_type = self._normalize_type(
+            str(row.get("type") or row.get("claim_type") or self._infer_type(sentence, entities, numbers, policies, dates))
+        )
         return Claim(
-            sentence_index=int(row["sentence_index"]),
+            sentence_index=int(row.get("sentence_index", row.get("sentence_id", row.get("index", 0)))),
             sentence=sentence,
-            claim_type=self._normalize_type(str(row.get("type") or row.get("claim_type") or "")),
-            entities=self._list(row.get("entities")),
-            numbers=self._list(row.get("numbers")),
-            policies=self._list(row.get("policies")),
-            dates=self._list(row.get("dates")),
+            claim_type=claim_type,
+            entities=entities,
+            numbers=numbers,
+            policies=policies,
+            dates=dates,
             confidence=max(0.0, min(1.0, confidence)),
             claim_text=str(row.get("claim") or row.get("claim_text") or sentence).strip(),
             extractor_model=self.model.model_name,
@@ -212,6 +259,26 @@ class LLMClaimExtractor:
         if normalized not in allowed:
             raise ValueError(f"Unsupported claim type from extractor: {value!r}")
         return normalized
+
+    def _infer_type(
+        self,
+        sentence: str,
+        entities: List[str],
+        numbers: List[str],
+        policies: List[str],
+        dates: List[str],
+    ) -> str:
+        if any(term in sentence for term in CAUSAL_TERMS):
+            return "causal"
+        if policies:
+            return "policy"
+        if numbers:
+            return "numerical"
+        if dates:
+            return "temporal"
+        if entities:
+            return "entity"
+        return "entity"
 
     def _list(self, value: Any) -> List[str]:
         if value is None:

@@ -184,6 +184,59 @@ def test_llm_claim_extractor_repairs_invalid_json():
     assert claims[0].claim_type == "numerical"
 
 
+def test_llm_claim_extractor_accepts_single_claim_object():
+    article = Article(
+        article_id="a1",
+        headline="রিজার্ভ বেড়েছে",
+        text="বাংলাদেশ ব্যাংকের রিজার্ভ ২৭.০৪ বিলিয়ন ডলারে পৌঁছেছে।",
+    )
+    model = FakeInstructionModel(
+        """
+        {
+          "sentence_index": 0,
+          "sentence": "বাংলাদেশ ব্যাংকের রিজার্ভ ২৭.০৪ বিলিয়ন ডলারে পৌঁছেছে।",
+          "claim": "Bangladesh Bank reserve reached 27.04B USD",
+          "numbers": ["২৭.০৪"],
+          "entities": ["বাংলাদেশ ব্যাংক"]
+        }
+        """
+    )
+
+    claims = build_claim_extractor({"backend": "llm_json", "min_confidence": 0.1}, model=model).extract(article)
+
+    assert len(claims) == 1
+    assert claims[0].sentence_index == 0
+    assert claims[0].claim_type == "numerical"
+
+
+def test_llm_claim_extractor_accepts_alternate_claim_list_key():
+    article = Article(
+        article_id="a1",
+        headline="রিজার্ভ বেড়েছে",
+        text="বাংলাদেশ ব্যাংকের রিজার্ভ ২৭.০৪ বিলিয়ন ডলারে পৌঁছেছে।",
+    )
+    model = FakeInstructionModel(
+        """
+        {
+          "factual_claims": [
+            {
+              "index": 0,
+              "sentence": "বাংলাদেশ ব্যাংকের রিজার্ভ ২৭.০৪ বিলিয়ন ডলারে পৌঁছেছে।",
+              "claim_type": "numeric",
+              "numbers": ["২৭.০৪"]
+            }
+          ]
+        }
+        """
+    )
+
+    claims = build_claim_extractor({"backend": "llm_json", "min_confidence": 0.1}, model=model).extract(article)
+
+    assert len(claims) == 1
+    assert claims[0].sentence_index == 0
+    assert claims[0].claim_type == "numerical"
+
+
 def test_llm_planner_parses_structured_json():
     article = Article(
         article_id="a1",
