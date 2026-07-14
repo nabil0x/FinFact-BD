@@ -1,360 +1,179 @@
-# Kaggle Smoke Test and Full Run Commands
+# Kaggle Script Workflow
 
-This runbook assumes the repository is available on Kaggle and commands are run
-from the repository root.
+Use the repository scripts instead of copying long command blocks. All scripts
+must be run from inside the repository or can be called by path after cloning.
 
-The active pipeline is:
-
-```text
-Article
-  -> Claim Extraction
-  -> Claim Ranking
-  -> Rewrite Planning
-  -> Controlled LLM Rewrite
-  -> Verification
-  -> Regeneration
-  -> Export
-  -> Human Validation Workbook
-```
+The scripts never accept Hugging Face tokens as command-line arguments. They read
+`HF_TOKEN` from the environment and, on Kaggle, try to load the `HF_TOKEN` Kaggle
+Secret automatically.
 
 ## Preconditions
 
 - Enable a Kaggle GPU runtime.
-- Accept the Hugging Face access terms for `CohereLabs/aya-expanse-8b`.
-- Add a Kaggle secret named `HF_TOKEN` with a Hugging Face token that can read
-  the gated Aya model.
-- Confirm the input file exists at `data/finfact_bd/finfact_bd_originals.csv`.
-- Run all commands from the repository root.
+- Accept Hugging Face access for `CohereLabs/aya-expanse-8b`.
+- Add a Kaggle Secret named `HF_TOKEN`.
+- Confirm `data/finfact_bd/finfact_bd_originals.csv` exists.
 
-## 1. Get the Repository
+## Script Map
 
-Use this when starting from a clean Kaggle notebook:
+| Script | Purpose |
+|---|---|
+| `scripts/kaggle_setup.sh` | Pull latest repo and install requirements |
+| `scripts/kaggle_check.sh` | Run compile, unit tests, and config validation |
+| `scripts/kaggle_gpu.sh` | Print `nvidia-smi` and Torch CUDA status |
+| `scripts/kaggle_preflight_metadata.sh` | Check Hugging Face model authorization only |
+| `scripts/kaggle_preflight_download.sh` | Download/cache configured model artifacts |
+| `scripts/kaggle_preflight_load.sh` | Load each configured model sequentially on GPU |
+| `scripts/kaggle_preflight_all.sh` | Run metadata, download, and load preflight |
+| `scripts/kaggle_smoke.sh` | Run clean 5-sample smoke generation |
+| `scripts/kaggle_pilot.sh` | Run clean 100-sample pilot generation |
+| `scripts/kaggle_full.sh` | Run full generation; does not clean by default |
+| `scripts/kaggle_resume.sh` | Resume full generation from checkpoint |
+| `scripts/kaggle_inspect.sh` | Inspect exported dataset/checkpoint/workbook |
+| `scripts/kaggle_all_smoke.sh` | Setup, check, preflight, smoke, and inspect |
+
+All wrappers call the orchestrator:
 
 ```bash
-git clone https://github.com/nabil0x/FinFact-BD.git
-cd FinFact-BD
-git pull
+python scripts/kaggle_run.py <subcommand>
 ```
 
-If the repository is already attached to the notebook, run:
+Inside a Kaggle notebook, prefer IPython `%run` if shell wrappers cannot see
+Kaggle Secrets:
+
+```python
+%run scripts/kaggle_run.py preflight --stage metadata
+%run scripts/kaggle_run.py smoke
+```
+
+## Recommended Kaggle Sequence
+
+Clone or enter the repo:
 
 ```bash
 cd /kaggle/working/FinFact-BD
-git pull
 ```
 
-Adjust the path if the attached repository directory has a different name.
-
-## 2. Set Kaggle Environment
-
-In a Kaggle notebook Python cell:
-
-```python
-import os
-from kaggle_secrets import UserSecretsClient
-
-os.environ["HF_TOKEN"] = UserSecretsClient().get_secret("HF_TOKEN")
-os.environ["HF_HOME"] = "/kaggle/temp/huggingface"
-```
-
-If running from a terminal instead of a notebook cell:
+Run setup:
 
 ```bash
-export HF_TOKEN="<your_huggingface_token>"
-export HF_HOME=/kaggle/temp/huggingface
+scripts/kaggle_setup.sh
 ```
 
-Do not commit tokens or paste them into repository files.
-
-When using Kaggle Secrets from a notebook, prefer running repository commands
-through Python `subprocess` after setting `os.environ`. A separate `%%bash` cell
-may not inherit secrets set inside the Python kernel.
-
-Reusable notebook runner:
-
-```python
-import os
-import subprocess
-import sys
-from pathlib import Path
-from kaggle_secrets import UserSecretsClient
-
-os.environ["HF_TOKEN"] = UserSecretsClient().get_secret("HF_TOKEN")
-os.environ["HF_HOME"] = "/kaggle/temp/huggingface"
-os.environ["HF_HUB_DISABLE_XET"] = "1"
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-Path("logs").mkdir(exist_ok=True)
-
-def run_logged(cmd, log_path):
-    with open(log_path, "w", encoding="utf-8") as log:
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            env=os.environ.copy(),
-        )
-        for line in process.stdout:
-            print(line, end="")
-            log.write(line)
-            log.flush()
-        code = process.wait()
-    if code != 0:
-        raise RuntimeError(f"Command failed with exit code {code}: {' '.join(cmd)}")
-```
-
-## 3. Install Dependencies
+Check local integrity:
 
 ```bash
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+scripts/kaggle_check.sh
+scripts/kaggle_gpu.sh
 ```
 
-If the Bangla normalizer git dependency fails transiently, rerun:
+Run staged model checks:
 
 ```bash
-pip install git+https://github.com/csebuetnlp/normalizer.git
+scripts/kaggle_preflight_metadata.sh
+scripts/kaggle_preflight_download.sh
+scripts/kaggle_preflight_load.sh
 ```
 
-## 4. Hardware Check
+Run smoke generation:
 
 ```bash
-nvidia-smi
-python - <<'PY'
-import torch
-
-print("torch:", torch.__version__)
-print("cuda:", torch.cuda.is_available())
-if torch.cuda.is_available():
-    print("device:", torch.cuda.get_device_name(0))
-PY
+scripts/kaggle_smoke.sh
+scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_smoke
 ```
 
-Expected result: CUDA is available on a Kaggle GPU runtime.
-
-## 5. Static Integrity Checks
-
-Run these before downloading large models:
+If smoke passes, run pilot:
 
 ```bash
-python -m compileall -q src scripts tests
-python -m pytest -q
+scripts/kaggle_pilot.sh
+scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_pilot
 ```
 
-Validate the production config shape:
+If pilot passes, run full generation:
 
 ```bash
-python - <<'PY'
-from pathlib import Path
-import yaml
-
-cfg = yaml.safe_load(Path("configs/rewrite_pipeline.yaml").read_text(encoding="utf-8"))
-required = [
-    ("paths", "input_csv"),
-    ("paths", "output_dir"),
-    ("input", "id_column"),
-    ("models", "extractor"),
-    ("models", "planner"),
-    ("models", "generator"),
-    ("models", "embedding"),
-    ("models", "nli"),
-    ("models", "fluency"),
-]
-
-missing = []
-for section, key in required:
-    if section not in cfg or key not in cfg[section]:
-        missing.append(f"{section}.{key}")
-
-if missing:
-    raise SystemExit(f"Missing config keys: {missing}")
-
-print("config ok")
-print("input:", cfg["paths"]["input_csv"])
-print("default output:", cfg["paths"]["output_dir"])
-PY
+scripts/kaggle_full.sh
+scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_full
 ```
 
-## 6. Hugging Face Access Check
-
-Preferred staged check:
+Resume interrupted full generation:
 
 ```bash
-python scripts/kaggle_preflight.py \
-  --config configs/rewrite_pipeline.yaml \
-  --log-level INFO \
-  2>&1 | tee logs/model_metadata_preflight.log
+scripts/kaggle_resume.sh
 ```
 
-Notebook-safe equivalent:
-
-```python
-run_logged(
-    [
-        sys.executable,
-        "scripts/kaggle_preflight.py",
-        "--config",
-        "configs/rewrite_pipeline.yaml",
-        "--log-level",
-        "INFO",
-    ],
-    "logs/model_metadata_preflight.log",
-)
-```
-
-This checks Hugging Face authorization and `config.json` access only. It should
-finish quickly.
-
-Then pre-download the configured model artifacts into the Hugging Face cache:
+One-command smoke path:
 
 ```bash
-python scripts/kaggle_preflight.py \
-  --config configs/rewrite_pipeline.yaml \
-  --download \
-  --disable-xet \
-  --log-level INFO \
-  2>&1 | tee logs/model_download_preflight.log
+scripts/kaggle_all_smoke.sh
 ```
 
-Notebook-safe equivalent:
+## Python Orchestrator
 
-```python
-run_logged(
-    [
-        sys.executable,
-        "scripts/kaggle_preflight.py",
-        "--config",
-        "configs/rewrite_pipeline.yaml",
-        "--download",
-        "--disable-xet",
-        "--log-level",
-        "INFO",
-    ],
-    "logs/model_download_preflight.log",
-)
-```
-
-This separates slow network/cache behavior from pipeline execution. If this is
-where the process stalls, the issue is model download/cache, not claim rewriting.
-
-Finally, load every configured model sequentially:
+Equivalent direct calls:
 
 ```bash
-python scripts/kaggle_preflight.py \
-  --config configs/rewrite_pipeline.yaml \
-  --load \
-  --disable-xet \
-  --log-level INFO \
-  2>&1 | tee logs/model_load_preflight.log
+python scripts/kaggle_run.py setup
+python scripts/kaggle_run.py check
+python scripts/kaggle_run.py gpu
+python scripts/kaggle_run.py preflight --stage all
+python scripts/kaggle_run.py smoke
+python scripts/kaggle_run.py pilot
+python scripts/kaggle_run.py full
+python scripts/kaggle_run.py resume
+python scripts/kaggle_run.py inspect --output-dir data/generated/rewrite_generation_smoke
 ```
 
-Notebook-safe equivalent:
-
-```python
-run_logged(
-    [
-        sys.executable,
-        "scripts/kaggle_preflight.py",
-        "--config",
-        "configs/rewrite_pipeline.yaml",
-        "--load",
-        "--disable-xet",
-        "--log-level",
-        "INFO",
-    ],
-    "logs/model_load_preflight.log",
-)
-```
-
-This reports elapsed time and `nvidia-smi` memory before and after each model
-load. Qwen and Aya are loaded one at a time.
-
-Minimal manual metadata check:
+Useful options:
 
 ```bash
-python - <<'PY'
-import os
-from huggingface_hub import hf_hub_download
-
-repos = [
-    "Qwen/Qwen3-8B",
-    "CohereLabs/aya-expanse-8b",
-    "intfloat/multilingual-e5-large",
-    "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7",
-    "csebuetnlp/banglabert",
-]
-
-token = os.environ.get("HF_TOKEN")
-for repo in repos:
-    path = hf_hub_download(repo_id=repo, filename="config.json", token=token)
-    print("OK", repo, "->", path)
-PY
+python scripts/kaggle_run.py smoke --num-samples 2
+python scripts/kaggle_run.py pilot --num-samples 50
+python scripts/kaggle_run.py full --clean
+python scripts/kaggle_run.py preflight --stage metadata
+python scripts/kaggle_run.py preflight --stage download
+python scripts/kaggle_run.py preflight --stage load
 ```
 
-If `CohereLabs/aya-expanse-8b` fails with `401` or `403`, the run is not ready.
-Accept the model terms on Hugging Face and verify `HF_TOKEN`.
+By default, Xet is disabled for preflight and pipeline runs because Kaggle/HF
+downloads can otherwise appear stalled. Pass `--enable-xet` to use Xet.
 
-## 7. Smoke Test
+## Logs
 
-Run a clean five-article smoke test:
+Scripts write logs under `logs/`:
 
-```bash
-rm -rf data/generated/rewrite_generation_smoke
-mkdir -p logs
+| Log | Created by |
+|---|---|
+| `logs/pip_install.log` | `kaggle_setup.sh` |
+| `logs/pytest.log` | `kaggle_check.sh` |
+| `logs/model_metadata_preflight.log` | metadata preflight |
+| `logs/model_download_preflight.log` | download preflight |
+| `logs/model_load_preflight.log` | load preflight |
+| `logs/rewrite_smoke.log` | smoke generation |
+| `logs/rewrite_pilot.log` | pilot generation |
+| `logs/rewrite_full.log` | full/resume generation |
 
-python scripts/run_rewrite_pipeline.py \
-  --config configs/rewrite_pipeline.yaml \
-  --input data/finfact_bd/finfact_bd_originals.csv \
-  --output-dir data/generated/rewrite_generation_smoke \
-  --num-samples 5 \
-  --seed 42 \
-  --log-level INFO \
-  2>&1 | tee logs/rewrite_smoke.log
-```
+## Outputs
 
-Notebook-safe equivalent:
-
-```python
-import shutil
-
-shutil.rmtree("data/generated/rewrite_generation_smoke", ignore_errors=True)
-run_logged(
-    [
-        sys.executable,
-        "scripts/run_rewrite_pipeline.py",
-        "--config",
-        "configs/rewrite_pipeline.yaml",
-        "--input",
-        "data/finfact_bd/finfact_bd_originals.csv",
-        "--output-dir",
-        "data/generated/rewrite_generation_smoke",
-        "--num-samples",
-        "5",
-        "--seed",
-        "42",
-        "--log-level",
-        "INFO",
-    ],
-    "logs/rewrite_smoke.log",
-)
-```
-
-The pipeline writes the checkpoint inside the supplied output directory:
+Smoke:
 
 ```text
-data/generated/rewrite_generation_smoke/checkpoint.json
+data/generated/rewrite_generation_smoke/
 ```
 
-This keeps smoke, pilot, and full runs isolated.
+Pilot:
 
-## 8. Inspect Smoke Outputs
-
-```bash
-ls -lh data/generated/rewrite_generation_smoke
+```text
+data/generated/rewrite_generation_pilot/
 ```
 
-Expected files:
+Full:
+
+```text
+data/generated/rewrite_generation_full/
+```
+
+Each output directory should contain:
 
 ```text
 checkpoint.json
@@ -364,238 +183,46 @@ human_validation.xlsx
 metadata.json
 ```
 
-Inspect run counts and first accepted samples:
+## Acceptance Gate
 
-```bash
-python - <<'PY'
-from pathlib import Path
-import csv
-import json
+Do not start the full run unless:
 
-out = Path("data/generated/rewrite_generation_smoke")
-meta = json.loads((out / "metadata.json").read_text(encoding="utf-8"))
-ckpt = json.loads((out / "checkpoint.json").read_text(encoding="utf-8"))
+- `scripts/kaggle_check.sh` passes.
+- `scripts/kaggle_preflight_all.sh` passes.
+- `scripts/kaggle_smoke.sh` finishes without CUDA OOM or Python exceptions.
+- `scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_smoke` shows at least one accepted sample.
+- The human validation workbook is claim-first and readable.
+- Manual inspection confirms Bangla output quality is acceptable.
 
-print("metadata:", meta)
-print("processed:", len(ckpt.get("processed_ids", [])))
-print("accepted:", len(ckpt.get("samples", [])))
-print("failures:", len(ckpt.get("failures", [])))
-
-csv_path = out / "finfact_bd_rewritten.csv"
-rows = list(csv.DictReader(csv_path.open(encoding="utf-8")))
-print("csv rows:", len(rows))
-for row in rows[:3]:
-    print({
-        "sample_id": row["sample_id"],
-        "article_id": row["article_id"],
-        "family": row["perturbation_family"],
-        "attempts": row["regeneration_attempts"],
-    })
-
-if ckpt.get("failures"):
-    print("first failures:")
-    for failure in ckpt["failures"][:5]:
-        print(failure)
-PY
-```
-
-Manually inspect the validation workbook before scaling:
-
-```bash
-python - <<'PY'
-from openpyxl import load_workbook
-
-path = "data/generated/rewrite_generation_smoke/human_validation.xlsx"
-wb = load_workbook(path, read_only=True)
-print(wb.sheetnames)
-ws = wb["Samples"]
-for row in ws.iter_rows(min_row=2, max_row=min(ws.max_row, 4), values_only=True):
-    print({
-        "sample_id": row[0],
-        "headline": row[1],
-        "claim_focus": row[2],
-        "context_window": row[3],
-    })
-PY
-```
-
-## 9. Smoke Acceptance Gate
-
-Do not start a full run unless all checks pass:
-
-- `compileall` passes.
-- `pytest` passes.
-- Hugging Face access check passes for all five model repositories.
-- Smoke run finishes without Python exceptions or CUDA OOM.
-- `checkpoint.json` shows at least one accepted sample.
-- `metadata.json` reports the same accepted count as the CSV/JSONL files.
-- The workbook is claim-first and readable.
-- Manual inspection confirms the Bangla rewrite is fluent enough for the paper.
-- Verification failures, if any, are explainable rather than systemic.
-
-If the smoke run accepts zero samples, inspect `logs/rewrite_smoke.log` and
-`checkpoint.json` before changing thresholds. Do not silently relax verification.
-
-## 10. Fix and Rerun Loop
-
-After code or config fixes:
-
-```bash
-git pull
-python -m compileall -q src scripts tests
-python -m pytest -q
-
-rm -rf data/generated/rewrite_generation_smoke
-python scripts/run_rewrite_pipeline.py \
-  --config configs/rewrite_pipeline.yaml \
-  --input data/finfact_bd/finfact_bd_originals.csv \
-  --output-dir data/generated/rewrite_generation_smoke \
-  --num-samples 5 \
-  --seed 42 \
-  --log-level INFO \
-  2>&1 | tee logs/rewrite_smoke.log
-```
-
-Use a clean smoke output directory after implementation changes. Use resume only
-for interrupted runs with the same code/config.
-
-## 11. Pilot Run
-
-After smoke passes, run a medium pilot:
-
-```bash
-rm -rf data/generated/rewrite_generation_pilot
-mkdir -p logs
-
-python scripts/run_rewrite_pipeline.py \
-  --config configs/rewrite_pipeline.yaml \
-  --input data/finfact_bd/finfact_bd_originals.csv \
-  --output-dir data/generated/rewrite_generation_pilot \
-  --num-samples 100 \
-  --seed 42 \
-  --log-level INFO \
-  2>&1 | tee logs/rewrite_pilot.log
-```
-
-Inspect pilot stats:
-
-```bash
-python - <<'PY'
-from pathlib import Path
-import json
-
-out = Path("data/generated/rewrite_generation_pilot")
-meta = json.loads((out / "metadata.json").read_text(encoding="utf-8"))
-ckpt = json.loads((out / "checkpoint.json").read_text(encoding="utf-8"))
-print("stats:", meta["stats"])
-print("processed:", len(ckpt.get("processed_ids", [])))
-print("accepted:", len(ckpt.get("samples", [])))
-print("failed:", len(ckpt.get("failures", [])))
-PY
-```
-
-## 12. Full Run
-
-Run over the complete input file by omitting `--num-samples`:
-
-```bash
-rm -rf data/generated/rewrite_generation_full
-mkdir -p logs
-
-python scripts/run_rewrite_pipeline.py \
-  --config configs/rewrite_pipeline.yaml \
-  --input data/finfact_bd/finfact_bd_originals.csv \
-  --output-dir data/generated/rewrite_generation_full \
-  --seed 42 \
-  --log-level INFO \
-  2>&1 | tee logs/rewrite_full.log
-```
-
-## 13. Resume an Interrupted Run
-
-Resume by rerunning the same command with the same output directory:
-
-```bash
-python scripts/run_rewrite_pipeline.py \
-  --config configs/rewrite_pipeline.yaml \
-  --input data/finfact_bd/finfact_bd_originals.csv \
-  --output-dir data/generated/rewrite_generation_full \
-  --seed 42 \
-  --log-level INFO \
-  2>&1 | tee -a logs/rewrite_full.log
-```
-
-The pipeline reads:
-
-```text
-data/generated/rewrite_generation_full/checkpoint.json
-```
-
-and skips already processed article IDs.
-
-## 14. Final Output Check
-
-```bash
-python - <<'PY'
-from pathlib import Path
-import csv
-import json
-
-out = Path("data/generated/rewrite_generation_full")
-required = [
-    "checkpoint.json",
-    "finfact_bd_rewritten.csv",
-    "finfact_bd_rewritten.jsonl",
-    "metadata.json",
-    "human_validation.xlsx",
-]
-
-for name in required:
-    path = out / name
-    print(name, "OK" if path.exists() else "MISSING", path.stat().st_size if path.exists() else 0)
-
-meta = json.loads((out / "metadata.json").read_text(encoding="utf-8"))
-ckpt = json.loads((out / "checkpoint.json").read_text(encoding="utf-8"))
-rows = list(csv.DictReader((out / "finfact_bd_rewritten.csv").open(encoding="utf-8")))
-jsonl_rows = sum(1 for _ in (out / "finfact_bd_rewritten.jsonl").open(encoding="utf-8"))
-
-print("metadata stats:", meta["stats"])
-print("checkpoint accepted:", len(ckpt.get("samples", [])))
-print("csv rows:", len(rows))
-print("jsonl rows:", jsonl_rows)
-
-assert meta["total_samples"] == len(rows) == jsonl_rows == len(ckpt.get("samples", []))
-print("final output counts match")
-PY
-```
+If smoke accepts zero samples, inspect `logs/rewrite_smoke.log` and
+`data/generated/rewrite_generation_smoke/checkpoint.json`. Do not weaken
+verification thresholds until the failure mode is understood.
 
 ## Common Failures
 
-`401` or `403` for Aya:
+Aya `401` or `403`:
 
-- Accept `CohereLabs/aya-expanse-8b` terms on Hugging Face.
-- Confirm `HF_TOKEN` is set in the Kaggle environment.
+- The `HF_TOKEN` secret is missing or belongs to the wrong Hugging Face account.
+- The account has not accepted access to `CohereLabs/aya-expanse-8b`.
 
-`KeyError: qwen3` or unsupported architecture:
+Qwen architecture error:
 
-- Ensure `transformers>=4.51.0` is installed from `requirements.txt`.
+- Install current requirements with `scripts/kaggle_setup.sh`.
+- The pipeline requires `transformers>=4.51.0`.
+
+Download appears stuck:
+
+- Use `scripts/kaggle_preflight_download.sh`.
+- Check `logs/model_download_preflight.log`.
+- Keep Xet disabled unless there is a reason to enable it.
 
 CUDA OOM:
 
-- Confirm `lazy: true` is present for Qwen and Aya in
-  `configs/rewrite_pipeline.yaml`. The pipeline releases each 8B model at role
-  boundaries so Qwen and Aya are not resident at the same time.
-- Restart the Kaggle kernel to clear fragmented VRAM.
-- Rerun the smoke test before scaling again.
+- Restart the Kaggle kernel.
+- Run `scripts/kaggle_preflight_load.sh`.
+- Confirm Qwen and Aya load sequentially rather than together.
 
-Zero accepted samples:
+Interrupted full run:
 
-- Inspect verifier reasons in `checkpoint.json`.
-- Inspect generated text in failed attempt logs if available.
-- Do not weaken verification thresholds until the failure mode is understood.
-
-Bangla quality is poor:
-
-- Stop after smoke or pilot.
-- Treat the generator choice as a research risk and validate an alternative
-  generator before full-scale generation.
+- Do not delete the output directory.
+- Run `scripts/kaggle_resume.sh`.

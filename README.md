@@ -132,17 +132,14 @@ tries up to the configured attempt limit and exports only passing samples.
 Install dependencies:
 
 ```bash
-pip install -r requirements.txt
+scripts/kaggle_setup.sh
 ```
 
-Run the active pipeline:
+Run smoke generation:
 
 ```bash
-python scripts/run_rewrite_pipeline.py \
-  --config configs/rewrite_pipeline.yaml \
-  --input data/finfact_bd/finfact_bd_originals.csv \
-  --output-dir data/generated/rewrite_generation \
-  --num-samples 100
+scripts/kaggle_smoke.sh
+scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_smoke
 ```
 
 The production config uses Hugging Face models for extraction, planning,
@@ -152,17 +149,17 @@ lightweight fake models so unit tests do not require a GPU or model downloads.
 Run tests:
 
 ```bash
-python -m pytest -q
+scripts/kaggle_check.sh
 ```
 
-For Kaggle smoke, pilot, full-run, resume, and output-inspection commands, see
+For Kaggle setup, preflight, smoke, pilot, full-run, resume, and inspection scripts, see
 `docs/KAGGLE_RUN_COMMANDS.md`.
 
 To isolate Kaggle model-access, download, and GPU-load failures before a smoke
 run, use:
 
 ```bash
-python scripts/kaggle_preflight.py --config configs/rewrite_pipeline.yaml --download --load --disable-xet
+scripts/kaggle_preflight_all.sh
 ```
 
 ## Outputs
