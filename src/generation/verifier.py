@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Protocol
+from typing import Any, Dict, List, Protocol
 
 from src.generation.metadata import Article, RewritePlan, VerificationReport, VerifierResult
 from src.generation.models import EmbeddingModel, FluencyModel, NLIModel
@@ -267,9 +268,12 @@ class DuplicateVerifier:
         self._accepted_vectors.append(self.embedder.encode([rewritten])[0])
 
 
-@dataclass(frozen=True)
+@dataclass
 class CompositeVerifier:
     verifiers: List[Verifier]
+    timing_seconds: Dict[str, float] = field(default_factory=dict)
+    call_counts: Dict[str, int] = field(default_factory=dict)
+    item_counts: Dict[str, int] = field(default_factory=dict)
 
     def verify(self, article: Article, rewritten: str, plan: RewritePlan) -> VerificationReport:
         return self.verify_batch([article], [rewritten], [plan])[0]
@@ -279,6 +283,7 @@ class CompositeVerifier:
             raise ValueError("Verifier batch inputs must have identical lengths")
         result_rows: List[List[VerifierResult]] = [[] for _ in articles]
         for verifier in self.verifiers:
+            start = time.perf_counter()
             batch_fn = getattr(verifier, "verify_batch", None)
             if callable(batch_fn):
                 results = batch_fn(articles, rewritten_articles, plans)
@@ -289,6 +294,7 @@ class CompositeVerifier:
                 ]
             if len(results) != len(articles):
                 raise RuntimeError(f"Verifier {verifier.name} returned {len(results)} results for {len(articles)} inputs")
+            self._record_timing(verifier.name, time.perf_counter() - start, len(articles))
             for row, result in zip(result_rows, results):
                 row.append(result)
 
@@ -301,6 +307,18 @@ class CompositeVerifier:
                         accept(rewritten)
         logger.info("Batch verification complete passed=%d failed=%d", sum(report.passed for report in reports), sum(not report.passed for report in reports))
         return reports
+
+    def timing_summary(self) -> Dict[str, Any]:
+        return {
+            "seconds": {name: round(value, 4) for name, value in self.timing_seconds.items()},
+            "calls": dict(self.call_counts),
+            "items": dict(self.item_counts),
+        }
+
+    def _record_timing(self, name: str, elapsed: float, items: int) -> None:
+        self.timing_seconds[name] = self.timing_seconds.get(name, 0.0) + elapsed
+        self.call_counts[name] = self.call_counts.get(name, 0) + 1
+        self.item_counts[name] = self.item_counts.get(name, 0) + items
 
 
 def build_verifier(models: object, config: Dict[str, object] | None = None) -> CompositeVerifier:

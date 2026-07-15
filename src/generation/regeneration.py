@@ -6,6 +6,7 @@ from typing import List, Optional
 
 from src.generation.metadata import Article, AttemptRecord, GeneratedRewrite, RewritePlan, VerificationReport
 from src.generation.rewrite_generator import RewriteGenerator
+from src.generation.runtime import clear_cuda_cache, is_cuda_oom
 from src.generation.verifier import CompositeVerifier
 
 logger = logging.getLogger(__name__)
@@ -86,11 +87,7 @@ class RegenerationController:
                 continue
 
             try:
-                reports = self.verifier.verify_batch(
-                    [articles[idx] for idx, _ in generated],
-                    [generation.rewritten_article for _, generation in generated],
-                    [plans[idx] for idx, _ in generated],
-                )
+                reports = self._verify_generated_adaptive(generated, articles, plans)
             except Exception as exc:
                 logger.exception("Batch verification failed attempt=%d", attempt)
                 for idx, generation in generated:
@@ -129,3 +126,23 @@ class RegenerationController:
             if result is None:
                 logger.warning("No passing rewrite after %d attempts for %s", self.config.max_attempts, articles[idx].article_id)
         return [RegenerationOutcome(result=result, attempts=attempts) for result, attempts in zip(results, attempts_by_index)]
+
+    def _verify_generated_adaptive(
+        self,
+        generated: List[tuple[int, GeneratedRewrite]],
+        articles: List[Article],
+        plans: List[RewritePlan],
+    ) -> List[VerificationReport]:
+        try:
+            return self.verifier.verify_batch(
+                [articles[idx] for idx, _ in generated],
+                [generation.rewritten_article for _, generation in generated],
+                [plans[idx] for idx, _ in generated],
+            )
+        except Exception as exc:
+            if len(generated) <= 1 or not is_cuda_oom(exc):
+                raise
+            clear_cuda_cache()
+            midpoint = max(1, len(generated) // 2)
+            logger.warning("CUDA OOM during verification batch size=%d; retrying as %d + %d", len(generated), midpoint, len(generated) - midpoint)
+            return self._verify_generated_adaptive(generated[:midpoint], articles, plans) + self._verify_generated_adaptive(generated[midpoint:], articles, plans)

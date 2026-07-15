@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import gc
 import logging
 import math
 from typing import Dict, List, Optional, Protocol
 
 from src.generation.models import EmbeddingModel, SentenceTransformersEmbeddingModel
+from src.generation.runtime import clear_cuda_cache
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class LazyEmbeddingModel:
 
     def release(self) -> None:
         self._model = None
-        _clear_cuda_cache()
+        clear_cuda_cache()
 
     def _load(self) -> EmbeddingModel:
         if self._model is None:
@@ -50,7 +50,7 @@ class LazyNLIModel:
 
     def release(self) -> None:
         self._model = None
-        _clear_cuda_cache()
+        clear_cuda_cache()
 
     def _load(self) -> "BatchedTransformersNLIModel":
         if self._model is None:
@@ -78,7 +78,7 @@ class LazyFluencyModel:
 
     def release(self) -> None:
         self._model = None
-        _clear_cuda_cache()
+        clear_cuda_cache()
 
     def _load(self) -> "BatchedFluencyModel":
         if self._model is None:
@@ -131,7 +131,7 @@ class BatchedTransformersNLIModel:
             max_length=512,
             return_tensors="pt",
         ).to(self._device)
-        with self._torch.no_grad():
+        with self._torch.inference_mode():
             logits = self._model(**inputs).logits
             probs = self._torch.softmax(logits, dim=-1)
         return [float(score) for score in probs[:, self._contradiction_index].detach().cpu().tolist()]
@@ -178,7 +178,7 @@ class BatchedCausalLMFluencyModel:
         inputs = self._tokenizer(texts, padding=True, truncation=True, max_length=1024, return_tensors="pt").to(self._device)
         labels = inputs["input_ids"].clone()
         labels[inputs["attention_mask"] == 0] = -100
-        with self._torch.no_grad():
+        with self._torch.inference_mode():
             logits = self._model(**inputs).logits
         shift_logits = logits[:, :-1, :].contiguous()
         shift_labels = labels[:, 1:].contiguous()
@@ -216,20 +216,9 @@ class BatchedElectraDiscriminatorQualityModel:
     def perplexities(self, texts: List[str]) -> List[float]:
         normalized = [self._normalize(text) for text in texts]
         inputs = self._tokenizer(normalized, padding=True, truncation=True, max_length=512, return_tensors="pt").to(self._device)
-        with self._torch.no_grad():
+        with self._torch.inference_mode():
             logits = self._model(**inputs).logits
             fake_probs = self._torch.sigmoid(logits)
             mask = inputs["attention_mask"].bool()
             mean_fake = (fake_probs * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1)
         return [float(1.0 + 300.0 * value) for value in mean_fake.detach().cpu().tolist()]
-
-
-def _clear_cuda_cache() -> None:
-    gc.collect()
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except ImportError:
-        return

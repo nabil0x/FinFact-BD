@@ -76,6 +76,14 @@ class RewritePlan:
 
 
 @dataclass(frozen=True)
+class PlannedArticle:
+    article: Article
+    selected: RankedClaim
+    plan: RewritePlan
+    sample_seed: int
+
+
+@dataclass(frozen=True)
 class GenerationParams:
     model_name: str
     model_revision: str

@@ -10,11 +10,13 @@ from typing import Any, Dict, List, Optional
 from src.generation.claim_extraction import ClaimExtractor, build_claim_extractor
 from src.generation.claim_selection import ClaimRanker, build_claim_ranker
 from src.generation.exporter import DatasetExporter, HumanValidationWorkbookBuilder
-from src.generation.metadata import Article, RankedClaim, RewritePlan, SampleRecord
+from src.generation.metadata import Article, PlannedArticle, SampleRecord
 from src.generation.models import ModelBundle, build_model_bundle
 from src.generation.perturbation_planner import RewritePlanner, build_planner
+from src.generation.planning_checkpoint import append_planned_article, load_planned_articles
 from src.generation.regeneration import RegenerationConfig, RegenerationController, RegenerationOutcome
 from src.generation.rewrite_generator import RewriteGenerator
+from src.generation.runtime import RuntimeMetrics, timed
 from src.generation.utils import read_json, stable_sample_id, utc_timestamp, write_json
 from src.generation.verifier import CompositeVerifier, build_verifier
 
@@ -42,14 +44,6 @@ class ArticleProcessOutcome:
     failure: Optional[Dict[str, Any]] = None
 
 
-@dataclass(frozen=True)
-class PlannedArticle:
-    article: Article
-    selected: RankedClaim
-    plan: RewritePlan
-    sample_seed: int
-
-
 class PlanningGuidedRewritePipeline:
     def __init__(
         self,
@@ -63,6 +57,8 @@ class PlanningGuidedRewritePipeline:
         self.paths = config.get("paths", {})
         self.input_cfg = config.get("input", {})
         self.checkpoint_path = Path(self.paths.get("checkpoint", "data/generated/rewrite_checkpoint.json"))
+        self.planning_checkpoint_path = self.checkpoint_path.with_name("planned_articles.jsonl")
+        self.metrics = RuntimeMetrics()
         self.model_bundle = model_bundle or build_model_bundle(config["models"])
         self.components = components or self._build_components(self.model_bundle)
 
@@ -70,50 +66,62 @@ class PlanningGuidedRewritePipeline:
         input_path = Path(input_csv or self.paths.get("input_csv", ""))
         out_dir = Path(output_dir or self.paths.get("output_dir", "data/generated/rewrite_generation"))
         self.checkpoint_path = self._checkpoint_for_run(out_dir, output_dir is not None)
+        self.planning_checkpoint_path = out_dir / "planned_articles.jsonl"
         logger.info("Using output_dir=%s checkpoint=%s", out_dir, self.checkpoint_path)
         articles = self._load_articles(input_path, num_samples)
         checkpoint = self._load_checkpoint()
         samples = [SampleRecord(**row) for row in checkpoint.get("samples", [])]
         failures = list(checkpoint.get("failures", []))
         processed = set(checkpoint.get("processed_ids", []))
+        planned_checkpoint = load_planned_articles(self.planning_checkpoint_path)
 
         pending_articles = [article for article in articles if article.article_id not in processed]
         planned_articles: List[PlannedArticle] = []
         logger.info("Planning phase starting pending=%d", len(pending_articles))
 
         try:
-            for article in pending_articles:
-                try:
-                    plan_outcome = self._plan_article(article)
-                except Exception as exc:
-                    logger.exception("Article planning crashed: %s", article.article_id)
-                    failures.append({"article_id": article.article_id, "reason": "exception", "stage": "planning", "error": str(exc)})
-                    processed.add(article.article_id)
-                    self._save_checkpoint(processed, samples, failures)
-                    continue
-                if isinstance(plan_outcome, ArticleProcessOutcome):
-                    failures.append(plan_outcome.failure or {"article_id": article.article_id, "reason": "unknown_planning_failure"})
-                    processed.add(article.article_id)
-                    self._save_checkpoint(processed, samples, failures)
-                    continue
-                planned_articles.append(plan_outcome)
+            with timed(self.metrics, "planning"):
+                for article in pending_articles:
+                    cached = planned_checkpoint.get(article.article_id)
+                    if cached is not None:
+                        planned_articles.append(cached)
+                        self.rng.randint(0, 2**31 - 1)
+                        self.metrics.increment("planned_checkpoint_hits")
+                        continue
+                    try:
+                        plan_outcome = self._plan_article(article)
+                    except Exception as exc:
+                        logger.exception("Article planning crashed: %s", article.article_id)
+                        failures.append({"article_id": article.article_id, "reason": "exception", "stage": "planning", "error": str(exc)})
+                        processed.add(article.article_id)
+                        self._save_checkpoint(processed, samples, failures)
+                        continue
+                    if isinstance(plan_outcome, ArticleProcessOutcome):
+                        failures.append(plan_outcome.failure or {"article_id": article.article_id, "reason": "unknown_planning_failure"})
+                        processed.add(article.article_id)
+                        self._save_checkpoint(processed, samples, failures)
+                        continue
+                    append_planned_article(self.planning_checkpoint_path, plan_outcome)
+                    planned_articles.append(plan_outcome)
+                    self.metrics.increment("planned_articles")
         finally:
             self._release_instruction_models()
         logger.info("Planning phase complete planned=%d failed=%d", len(planned_articles), len(failures))
 
         logger.info("Generation phase starting planned=%d", len(planned_articles))
         try:
-            batch_size = max(1, int(self.config.get("verification", {}).get("batch_size", 8)))
-            for batch in self._chunks(planned_articles, batch_size):
-                active_batch = [planned for planned in batch if planned.article.article_id not in processed]
-                for planned_article, outcome in zip(active_batch, self._generate_article_batch(active_batch)):
-                    article = planned_article.article
-                    if outcome.sample is None:
-                        failures.append(outcome.failure or {"article_id": article.article_id, "reason": "unknown_generation_failure"})
-                    else:
-                        samples.append(outcome.sample)
-                    processed.add(article.article_id)
-                    self._save_checkpoint(processed, samples, failures)
+            with timed(self.metrics, "generation"):
+                batch_size = max(1, int(self.config.get("verification", {}).get("batch_size", 8)))
+                for batch in self._chunks(planned_articles, batch_size):
+                    active_batch = [planned for planned in batch if planned.article.article_id not in processed]
+                    for planned_article, outcome in zip(active_batch, self._generate_article_batch(active_batch)):
+                        article = planned_article.article
+                        if outcome.sample is None:
+                            failures.append(outcome.failure or {"article_id": article.article_id, "reason": "unknown_generation_failure"})
+                        else:
+                            samples.append(outcome.sample)
+                        processed.add(article.article_id)
+                        self._save_checkpoint(processed, samples, failures)
         finally:
             self._release_verifier_models()
             self._release_model(self.model_bundle.generator)
@@ -124,6 +132,7 @@ class PlanningGuidedRewritePipeline:
             "accepted": len(samples),
             "failed": len(failures),
             "seed": self.seed,
+            "runtime": self._runtime_metadata(),
         }
         DatasetExporter(out_dir).export(samples, stats)
         if self.config.get("human_validation", {}).get("enabled", True):
@@ -290,6 +299,14 @@ class PlanningGuidedRewritePipeline:
         release = getattr(model, "release", None)
         if callable(release):
             release()
+
+    def _runtime_metadata(self) -> Dict[str, Any]:
+        verifier_timing = self.components.regenerator.verifier.timing_summary()
+        return {
+            **self.metrics.to_dict(),
+            "verification": verifier_timing,
+            "planned_checkpoint": str(self.planning_checkpoint_path),
+        }
 
     def _load_checkpoint(self) -> Dict[str, Any]:
         if not self.checkpoint_path.exists():

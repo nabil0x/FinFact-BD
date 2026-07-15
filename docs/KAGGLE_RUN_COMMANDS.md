@@ -121,7 +121,9 @@ once per article, stop the run and update the repository before scaling.
 
 Verifier batch size is controlled by `verification.batch_size` in
 `configs/rewrite_pipeline.yaml`. The default is `8`, which is intentionally
-conservative for Kaggle T4 memory.
+conservative for Kaggle T4 memory. If a verifier batch hits CUDA OOM, the
+pipeline clears CUDA cache, splits the batch, and retries without regenerating
+the candidates.
 
 Resume interrupted full generation:
 
@@ -213,11 +215,16 @@ Each output directory should contain:
 
 ```text
 checkpoint.json
+planned_articles.jsonl
 finfact_bd_rewritten.csv
 finfact_bd_rewritten.jsonl
 human_validation.xlsx
 metadata.json
 ```
+
+`metadata.json` contains runtime timing under `stats.runtime`, including
+planning, generation, and per-verifier timing. `planned_articles.jsonl` allows
+resume to skip completed Qwen extraction/planning work.
 
 ## Acceptance Gate
 
@@ -257,6 +264,8 @@ CUDA OOM:
 - Restart the Kaggle kernel.
 - Run `scripts/kaggle_preflight_load.sh`.
 - Confirm Qwen and Aya load sequentially rather than together.
+- If only verifier OOM appears, reduce `verification.batch_size`; the pipeline
+  will already retry smaller verifier sub-batches automatically.
 
 Interrupted full run:
 

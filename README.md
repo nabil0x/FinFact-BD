@@ -70,6 +70,9 @@ src/generation/
   perturbation_planner.py  Structured rewrite-plan generation
   prompts.py               Prompt templates and prompt versioning
   models.py                Generation, embedding, NLI, and fluency model interfaces
+  lazy_verifier_models.py  Lazy verifier model wrappers and batched inference
+  planning_checkpoint.py   Planned-article JSONL checkpoint serialization
+  runtime.py               Runtime metrics, timing, and CUDA OOM helpers
   rewrite_generator.py     Constrained localized rewrite realization
   verifier.py              Independent verification modules
   regeneration.py          Retry controller with attempt records
@@ -102,9 +105,10 @@ phase across all pending articles, then released. Aya is loaded once for the
 rewrite/regeneration phase across all planned articles, then released.
 Verifier models are lazy-loaded only when verification starts, scored in
 configurable batches, and explicitly released at the end of generation. The
-pipeline should not reload Qwen, Aya, or verifier models per sample. Aya is
-hosted behind Hugging Face access controls; set `HF_TOKEN` in the Kaggle
-notebook and accept the model license before running the production config.
+pipeline should not reload Qwen, Aya, or verifier models per sample. Verification
+batches automatically split and retry on CUDA out-of-memory errors. Aya is hosted
+behind Hugging Face access controls; set `HF_TOKEN` in the Kaggle notebook and
+accept the model license before running the production config.
 
 ## Rewrite Families
 
@@ -132,6 +136,18 @@ Failed generations are never accepted silently. The regeneration controller
 tries up to the configured attempt limit and exports only passing samples.
 Embedding, NLI, fluency, and duplicate checks support batch execution; original
 article embeddings are cached across regeneration attempts.
+
+## Checkpointing
+
+Long-running runs write two checkpoint artifacts:
+
+- `checkpoint.json` stores processed article IDs, accepted samples, and failures.
+- `planned_articles.jsonl` stores completed Qwen extraction/planning results so
+  interrupted runs can resume generation without repeating deterministic
+  planning work.
+
+Exported `metadata.json` includes runtime timing for planning, generation, and
+individual verifier components.
 
 ## Running
 
@@ -175,6 +191,7 @@ The exporter writes:
 - `finfact_bd_rewritten.csv`
 - `finfact_bd_rewritten.jsonl`
 - `metadata.json`
+- `planned_articles.jsonl`
 - `human_validation.xlsx` when enabled
 
 Every accepted sample contains:
