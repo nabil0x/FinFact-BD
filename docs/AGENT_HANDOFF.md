@@ -14,6 +14,8 @@ The repository is on `main`. Recent important commits before the plan-review wor
 
 The latest completed 10-sample run should be treated as a prompt/rule-example plus verifier-alignment experiment. The current plan-review changes add one reviewer pass before generation.
 
+For a run-by-run experiment control sheet, see [docs/EXPERIMENT_DESIGN_PLAYBOOK.md](/mnt/work/phd/phd-prep/financial%20nlp/papers/IDEA_3_FinFact_BD/docs/EXPERIMENT_DESIGN_PLAYBOOK.md).
+
 ## What Changed Recently
 
 ### Rulebook and Planning
