@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import os
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -45,3 +46,42 @@ def clear_cuda_cache() -> None:
             torch.cuda.empty_cache()
     except ImportError:
         return
+
+
+def memory_snapshot() -> Dict[str, float | int | None]:
+    return {
+        "gpu_memory_allocated_mb": _gpu_memory_allocated_mb(),
+        "gpu_memory_reserved_mb": _gpu_memory_reserved_mb(),
+        "cpu_ram_used_gb": _cpu_ram_used_gb(),
+    }
+
+
+def _gpu_memory_allocated_mb() -> int | None:
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return int(torch.cuda.max_memory_allocated() / (1024 * 1024))
+    except ImportError:
+        return None
+    return None
+
+
+def _gpu_memory_reserved_mb() -> int | None:
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return int(torch.cuda.max_memory_reserved() / (1024 * 1024))
+    except ImportError:
+        return None
+    return None
+
+
+def _cpu_ram_used_gb() -> float | None:
+    try:
+        import psutil
+
+        return round(psutil.Process(os.getpid()).memory_info().rss / (1024**3), 4)
+    except ImportError:
+        return None

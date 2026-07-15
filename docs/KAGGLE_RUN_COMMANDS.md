@@ -28,6 +28,8 @@ Secret automatically.
 | `scripts/kaggle_smoke.sh` | Run clean 5-sample smoke generation |
 | `scripts/kaggle_pilot20.sh` | Run clean 20-sample pilot generation |
 | `scripts/kaggle_pilot.sh` | Run clean 100-sample pilot generation |
+| `scripts/kaggle_stress1k.sh` | Run clean 1k stress generation |
+| `scripts/kaggle_metrics.sh` | Summarize throughput, retry, memory, and verifier timing metrics |
 | `scripts/kaggle_full.sh` | Run full generation; does not clean by default |
 | `scripts/kaggle_resume.sh` | Resume full generation from checkpoint |
 | `scripts/kaggle_inspect.sh` | Inspect exported dataset/checkpoint/workbook |
@@ -95,13 +97,23 @@ If the 20-sample pilot passes, run the larger pilot:
 ```bash
 scripts/kaggle_pilot.sh
 scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_pilot --fast
+scripts/kaggle_metrics.sh --output-dir data/generated/rewrite_generation_pilot --log logs/rewrite_pilot.log --write
 ```
 
-If pilot passes, run full generation:
+If pilot passes, run a 1k stress test:
+
+```bash
+scripts/kaggle_stress1k.sh
+scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_stress1k --fast
+scripts/kaggle_metrics.sh --output-dir data/generated/rewrite_generation_stress1k --log logs/rewrite_stress1k.log --write
+```
+
+If the 1k stress test passes, run full generation:
 
 ```bash
 scripts/kaggle_full.sh
 scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_full --fast
+scripts/kaggle_metrics.sh --output-dir data/generated/rewrite_generation_full --log logs/rewrite_full.log --write
 ```
 
 ## Expected Model Lifecycle
@@ -149,9 +161,11 @@ python scripts/kaggle_run.py preflight --stage all
 python scripts/kaggle_run.py smoke
 python scripts/kaggle_run.py pilot --num-samples 20 --output-dir data/generated/rewrite_generation_pilot20
 python scripts/kaggle_run.py pilot
+python scripts/kaggle_run.py stress1k
 python scripts/kaggle_run.py full
 python scripts/kaggle_run.py resume
 python scripts/kaggle_run.py inspect --output-dir data/generated/rewrite_generation_smoke
+python scripts/kaggle_run.py metrics --output-dir data/generated/rewrite_generation_stress1k --log logs/rewrite_stress1k.log --write
 python scripts/kaggle_run.py inspect --output-dir data/generated/rewrite_generation_smoke --fast
 ```
 
@@ -205,6 +219,12 @@ Pilot:
 data/generated/rewrite_generation_pilot/
 ```
 
+1k stress:
+
+```text
+data/generated/rewrite_generation_stress1k/
+```
+
 Full:
 
 ```text
@@ -220,11 +240,14 @@ finfact_bd_rewritten.csv
 finfact_bd_rewritten.jsonl
 human_validation.xlsx
 metadata.json
+metrics_summary.json
 ```
 
 `metadata.json` contains runtime timing under `stats.runtime`, including
 planning, generation, and per-verifier timing. `planned_articles.jsonl` allows
 resume to skip completed Qwen extraction/planning work.
+`metrics_summary.json` contains throughput, retry, memory, verification timing,
+OOM recovery, and checkpoint health summaries for stress/full-run decisions.
 
 ## Acceptance Gate
 
@@ -236,6 +259,8 @@ Do not start the full run unless:
 - `scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_smoke` shows at least one accepted sample.
 - The human validation workbook is claim-first and readable.
 - Manual inspection confirms Bangla output quality is acceptable.
+- `metrics_summary.json` shows acceptable throughput, rare or zero OOM
+  recoveries, and no verifier bottleneck severe enough to dominate generation.
 
 If smoke accepts zero samples, inspect `logs/rewrite_smoke.log` and
 `data/generated/rewrite_generation_smoke/checkpoint.json`. Do not weaken

@@ -147,7 +147,9 @@ Long-running runs write two checkpoint artifacts:
   planning work.
 
 Exported `metadata.json` includes runtime timing for planning, generation, and
-individual verifier components.
+individual verifier components. `scripts/kaggle_metrics.sh` summarizes these
+signals with retry statistics, throughput, memory-log parsing, OOM recovery
+counts, and checkpoint health.
 
 ## Running
 
@@ -191,6 +193,7 @@ The exporter writes:
 - `finfact_bd_rewritten.csv`
 - `finfact_bd_rewritten.jsonl`
 - `metadata.json`
+- `metrics_summary.json` when `scripts/kaggle_metrics.sh --write` is run
 - `planned_articles.jsonl`
 - `human_validation.xlsx` when enabled
 

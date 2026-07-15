@@ -16,7 +16,7 @@ from src.generation.perturbation_planner import RewritePlanner, build_planner
 from src.generation.planning_checkpoint import append_planned_article, load_planned_articles
 from src.generation.regeneration import RegenerationConfig, RegenerationController, RegenerationOutcome
 from src.generation.rewrite_generator import RewriteGenerator
-from src.generation.runtime import RuntimeMetrics, timed
+from src.generation.runtime import RuntimeMetrics, memory_snapshot, timed
 from src.generation.utils import read_json, stable_sample_id, utc_timestamp, write_json
 from src.generation.verifier import CompositeVerifier, build_verifier
 
@@ -106,6 +106,7 @@ class PlanningGuidedRewritePipeline:
                     self.metrics.increment("planned_articles")
         finally:
             self._release_instruction_models()
+        self._log_memory("after_planning")
         logger.info("Planning phase complete planned=%d failed=%d", len(planned_articles), len(failures))
 
         logger.info("Generation phase starting planned=%d", len(planned_articles))
@@ -122,9 +123,11 @@ class PlanningGuidedRewritePipeline:
                             samples.append(outcome.sample)
                         processed.add(article.article_id)
                         self._save_checkpoint(processed, samples, failures)
+                    self._log_memory("generation_batch")
         finally:
             self._release_verifier_models()
             self._release_model(self.model_bundle.generator)
+        self._log_memory("after_generation_release")
         logger.info("Generation phase complete accepted=%d failed=%d", len(samples), len(failures))
 
         stats = {
@@ -307,6 +310,17 @@ class PlanningGuidedRewritePipeline:
             "verification": verifier_timing,
             "planned_checkpoint": str(self.planning_checkpoint_path),
         }
+
+    def _log_memory(self, stage: str) -> None:
+        snapshot = memory_snapshot()
+        self.metrics.counters["memory_snapshots"] = self.metrics.counters.get("memory_snapshots", 0) + 1
+        logger.info(
+            "memory stage=%s gpu_memory_allocated_mb=%s gpu_memory_reserved_mb=%s cpu_ram_used_gb=%s",
+            stage,
+            snapshot["gpu_memory_allocated_mb"],
+            snapshot["gpu_memory_reserved_mb"],
+            snapshot["cpu_ram_used_gb"],
+        )
 
     def _load_checkpoint(self) -> Dict[str, Any]:
         if not self.checkpoint_path.exists():

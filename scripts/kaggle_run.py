@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import shutil
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from kaggle_output_inspector import inspect_output
+from kaggle_metrics import summarize_metrics
 
 DEFAULT_CONFIG = "configs/rewrite_pipeline.yaml"
 DEFAULT_INPUT = "data/finfact_bd/finfact_bd_originals.csv"
@@ -18,6 +20,7 @@ LOG_DIR = Path("logs")
 
 OUTPUT_DIRS = {
     "smoke": "data/generated/rewrite_generation_smoke",
+    "stress1k": "data/generated/rewrite_generation_stress1k",
     "pilot": "data/generated/rewrite_generation_pilot",
     "full": "data/generated/rewrite_generation_full",
 }
@@ -187,6 +190,10 @@ def pilot(args: argparse.Namespace) -> None:
     pipeline(args, "pilot")
 
 
+def stress1k(args: argparse.Namespace) -> None:
+    pipeline(args, "stress1k")
+
+
 def full(args: argparse.Namespace) -> None:
     pipeline(args, "full")
 
@@ -199,6 +206,14 @@ def resume(args: argparse.Namespace) -> None:
 
 def inspect(args: argparse.Namespace) -> None:
     inspect_output(Path(args.output_dir), args.preview, args.fast, args.skip_workbook)
+
+
+def metrics(args: argparse.Namespace) -> None:
+    summary = summarize_metrics(Path(args.output_dir), Path(args.log) if args.log else None)
+    if args.write:
+        path = Path(args.output_dir) / "metrics_summary.json"
+        path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
 def all_smoke(args: argparse.Namespace) -> None:
@@ -271,6 +286,10 @@ def parse_args() -> argparse.Namespace:
     add_pipeline_args(pilot_parser, OUTPUT_DIRS["pilot"], 100)
     pilot_parser.set_defaults(func=pilot, clean=True)
 
+    stress_parser = sub.add_parser("stress1k", help="Run clean 1k stress generation.")
+    add_pipeline_args(stress_parser, OUTPUT_DIRS["stress1k"], 1000)
+    stress_parser.set_defaults(func=stress1k, clean=True)
+
     full_parser = sub.add_parser("full", help="Run full generation. Does not clean by default.")
     add_pipeline_args(full_parser, OUTPUT_DIRS["full"], None)
     full_parser.set_defaults(func=full)
@@ -285,6 +304,12 @@ def parse_args() -> argparse.Namespace:
     inspect_parser.add_argument("--fast", action="store_true", help="Skip workbook parsing and count CSV rows by line count.")
     inspect_parser.add_argument("--skip-workbook", action="store_true", help="Skip human_validation.xlsx preview.")
     inspect_parser.set_defaults(func=inspect)
+
+    metrics_parser = sub.add_parser("metrics", help="Summarize throughput, retry, memory, and verifier timing metrics.")
+    metrics_parser.add_argument("--output-dir", default=OUTPUT_DIRS["smoke"])
+    metrics_parser.add_argument("--log")
+    metrics_parser.add_argument("--write", action="store_true")
+    metrics_parser.set_defaults(func=metrics)
 
     all_parser = sub.add_parser("all-smoke", help="Setup, test, preflight, smoke, and inspect.")
     all_parser.add_argument("--skip-setup", action="store_true")
