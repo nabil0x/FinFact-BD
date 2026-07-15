@@ -87,7 +87,7 @@ No model is asked to extract, plan, generate, and verify at the same time.
 
 | Role | Default model | Responsibility |
 |------|---------------|----------------|
-| Claim extraction | `Qwen/Qwen3-8B` | Convert Bangla article sentences into structured factual claim JSON |
+| Claim extraction | heuristic sentence/linguistic extractor | Convert Bangla article sentences into factual claim candidates |
 | Rewrite planning | `Qwen/Qwen3-8B` | Decide the target span, perturbation family, intended change, and constraints |
 | Controlled rewrite | `CohereLabs/aya-expanse-8b` | Rewrite the planned local claim in fluent Bangla |
 | Semantic similarity | `intfloat/multilingual-e5-large` | Check that the article remains globally close to the source |
@@ -95,13 +95,18 @@ No model is asked to extract, plan, generate, and verify at the same time.
 | Language quality | `csebuetnlp/banglabert` | ELECTRA discriminator signal for Bangla language quality |
 | Locality and hallucination | deterministic checks | Detect sentence drift and unplanned entities, numbers, dates, and organizations |
 
-Qwen is used for structured reasoning, Aya is used for Bangla realization, and
-the verifier stack is independent from the generator. This separation is a core
-methodological constraint, not an implementation detail.
+The default Kaggle configuration uses fast heuristic claim extraction because a
+full-dataset audit showed `99.65%` candidate coverage with the first 20
+sentences, while LLM extraction took several minutes per article. Qwen is still
+used for structured rewrite planning, Aya is used for Bangla realization, and the
+verifier stack is independent from the generator. This separation is a core
+methodological constraint, not an implementation detail. The slower full
+LLM-extraction profile is preserved in
+`configs/rewrite_pipeline_llm_extraction.yaml` for ablations.
 
 For Kaggle T4 runs, the two 8B models are configured with lazy loading and the
-pipeline executes them by role. Qwen is loaded once for the extraction/planning
-phase across all pending articles, then released. Aya is loaded once for the
+pipeline executes them by role. Qwen is loaded once for the planning phase
+across all pending articles, then released. Aya is loaded once for the
 rewrite/regeneration phase across all planned articles, then released.
 Verifier models are lazy-loaded only when verification starts, scored in
 configurable batches, and explicitly released at the end of generation. The
@@ -178,6 +183,9 @@ scripts/kaggle_check.sh
 
 For Kaggle setup, preflight, smoke, pilot, full-run, resume, and inspection scripts, see
 `docs/KAGGLE_RUN_COMMANDS.md`.
+
+For the dataset-driven configuration analysis, see
+`docs/DATASET_CONFIG_ANALYSIS.md`.
 
 To isolate Kaggle model-access, download, and GPU-load failures before a smoke
 run, use:

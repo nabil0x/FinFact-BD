@@ -1,7 +1,7 @@
 paths:
   input_csv: "data/finfact_bd/finfact_bd_originals.csv"
-  output_dir: "data/generated/rewrite_generation"
-  checkpoint: "data/generated/rewrite_generation/checkpoint.json"
+  output_dir: "data/generated/rewrite_generation_llm_extraction"
+  checkpoint: "data/generated/rewrite_generation_llm_extraction/checkpoint.json"
 
 input:
   id_column: "article_id"
@@ -12,10 +12,15 @@ pipeline:
   seed: 42
 
 claim_extraction:
-  backend: "heuristic"
+  backend: "llm_json"
   min_confidence: 0.35
   min_sentence_chars: 18
-  max_sentences: 20
+  max_sentences: 80
+  max_claims: 12
+  max_new_tokens: 1536
+  temperature: 0.0
+  seed: 42
+  json_repair_attempts: 1
 
 claim_ranking:
   min_overall_score: 0.52
@@ -29,7 +34,7 @@ planner:
     - entity_replacement
     - temporal_shift
     - causal_inversion
-  max_new_tokens: 384
+  max_new_tokens: 768
   temperature: 0.0
   seed: 43
   json_repair_attempts: 1
@@ -52,8 +57,6 @@ verification:
 models:
   device: "cuda"
   extractor:
-    enabled: false
-  planner:
     enabled: true
     backend: "hf_causal_lm"
     model_name: "Qwen/Qwen3-8B"
@@ -64,6 +67,9 @@ models:
     use_chat_template: true
     chat_template_kwargs:
       enable_thinking: false
+  planner:
+    enabled: true
+    share_with: "extractor"
   generator:
     backend: "hf_causal_lm"
     model_name: "CohereLabs/aya-expanse-8b"

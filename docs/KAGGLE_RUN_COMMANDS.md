@@ -121,15 +121,17 @@ scripts/kaggle_metrics.sh --output-dir data/generated/rewrite_generation_full --
 The pipeline is staged by model role, not by article:
 
 ```text
-all pending articles -> Qwen extraction/planning -> release Qwen
+all pending articles -> heuristic claim extraction
+planned candidates -> Qwen rewrite planning -> release Qwen
 all planned articles -> Aya rewrite/regeneration
 verification starts -> lazy-load e5/NLI/BanglaBERT -> batched verification
 run complete -> release verifier stack -> release Aya
 ```
 
 For a five-sample smoke or a 20-sample pilot, Qwen, Aya, e5, NLI, and BanglaBERT
-should each load once per pipeline run. If logs show any of these models loading
-once per article, stop the run and update the repository before scaling.
+should each load once per pipeline run. Qwen should appear during planning, not
+during claim extraction. If logs show any model loading once per article, stop
+the run and update the repository before scaling.
 
 Verifier batch size is controlled by `verification.batch_size` in
 `configs/rewrite_pipeline.yaml`. The default is `8`, which is intentionally
@@ -175,6 +177,7 @@ Useful options:
 python scripts/kaggle_run.py smoke --num-samples 2
 python scripts/kaggle_run.py pilot --num-samples 50
 python scripts/kaggle_run.py full --clean
+python scripts/kaggle_run.py smoke --config configs/rewrite_pipeline_llm_extraction.yaml
 python scripts/kaggle_run.py inspect --output-dir data/generated/rewrite_generation_smoke --skip-workbook
 python scripts/kaggle_run.py preflight --stage metadata
 python scripts/kaggle_run.py preflight --stage download
