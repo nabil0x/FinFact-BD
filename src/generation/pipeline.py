@@ -10,14 +10,14 @@ from typing import Any, Dict, List, Optional
 from src.generation.claim_extraction import ClaimExtractor, build_claim_extractor
 from src.generation.claim_selection import ClaimRanker, build_claim_ranker
 from src.generation.exporter import DatasetExporter, HumanValidationWorkbookBuilder
-from src.generation.metadata import Article, PlannedArticle, SampleRecord
+from src.generation.metadata import Article, PlannedArticle, RewritePlan, SampleRecord
 from src.generation.models import ModelBundle, build_model_bundle
 from src.generation.perturbation_planner import RewritePlanner, build_planner
 from src.generation.planning_checkpoint import append_planned_article, load_planned_articles
 from src.generation.regeneration import RegenerationConfig, RegenerationController, RegenerationOutcome
 from src.generation.rewrite_generator import RewriteGenerator
 from src.generation.runtime import RuntimeMetrics, memory_snapshot, timed
-from src.generation.utils import read_json, stable_sample_id, utc_timestamp, write_json
+from src.generation.utils import normalize_digits, read_json, sentence_spans, stable_sample_id, utc_timestamp, write_json
 from src.generation.verifier import CompositeVerifier, build_verifier
 
 logger = logging.getLogger(__name__)
@@ -164,8 +164,8 @@ class PlanningGuidedRewritePipeline:
 
     def _plan_article(self, article: Article) -> PlannedArticle | ArticleProcessOutcome:
         claims = self.components.extractor.extract(article)
-        selected = self.components.ranker.select(article, claims)
-        if selected is None:
+        ranked = self.components.ranker.select_all_ranked(article, claims)
+        if not ranked:
             logger.warning("No ranked claim passed quality gate for %s", article.article_id)
             return ArticleProcessOutcome(
                 failure={
@@ -174,9 +174,110 @@ class PlanningGuidedRewritePipeline:
                     "extracted_claims": [claim.to_dict() for claim in claims],
                 }
             )
-        plan = self.components.planner.create_plan(selected)
-        sample_seed = self.rng.randint(0, 2**31 - 1)
-        return PlannedArticle(article=article, selected=selected, plan=plan, sample_seed=sample_seed)
+        last_error: str | None = None
+        for candidate_idx, selected in enumerate(ranked):
+            try:
+                plan = self.components.planner.create_plan(selected)
+            except Exception as exc:
+                last_error = str(exc)
+                logger.warning(
+                    "Planning failed for %s candidate=%d/%d claim_type=%s: %s",
+                    article.article_id,
+                    candidate_idx + 1,
+                    len(ranked),
+                    selected.claim.claim_type,
+                    last_error,
+                )
+                continue
+            validation_failure = self._validate_plan_executable(article, plan)
+            if validation_failure is not None:
+                last_error = validation_failure.failure.get("reason", "validation_failed") if validation_failure.failure else "validation_failed"
+                continue
+            sample_seed = self.rng.randint(0, 2**31 - 1)
+            return PlannedArticle(article=article, selected=selected, plan=plan, sample_seed=sample_seed)
+        logger.warning(
+            "All %d candidates failed for %s: last_error=%s",
+            len(ranked),
+            article.article_id,
+            last_error,
+        )
+        return ArticleProcessOutcome(
+            failure={
+                "article_id": article.article_id,
+                "reason": "all_planning_candidates_failed",
+                "last_error": last_error,
+                "candidate_count": len(ranked),
+            }
+        )
+
+    def _validate_plan_executable(self, article: Article, plan: RewritePlan) -> ArticleProcessOutcome | None:
+
+        target_span = plan.target_span.strip()
+        replacement = plan.replacement.strip()
+        if not target_span:
+            logger.warning("Plan missing target_span for %s", article.article_id)
+            return ArticleProcessOutcome(
+                failure={
+                    "article_id": article.article_id,
+                    "reason": "plan_missing_target_span",
+                    "rewrite_plan": plan.to_dict(),
+                }
+            )
+        if replacement and target_span == replacement:
+            logger.warning("Plan target_span equals replacement for %s", article.article_id)
+            return ArticleProcessOutcome(
+                failure={
+                    "article_id": article.article_id,
+                    "reason": "plan_target_equals_replacement",
+                    "rewrite_plan": plan.to_dict(),
+                }
+            )
+        spans = sentence_spans(article.text)
+        target_index = plan.target_claim.sentence_index
+        if target_index >= len(spans):
+            logger.warning("Target sentence index %d missing from article %s", target_index, article.article_id)
+            return ArticleProcessOutcome(
+                failure={
+                    "article_id": article.article_id,
+                    "reason": "target_sentence_index_out_of_range",
+                    "target_index": target_index,
+                    "sentence_count": len(spans),
+                    "rewrite_plan": plan.to_dict(),
+                }
+            )
+        target_text = spans[target_index].text
+        if target_span in target_text:
+            return None
+        normalized_target = normalize_digits(target_span)
+        normalized_text = normalize_digits(target_text)
+        if normalized_target in normalized_text:
+            return None
+        # Entity-aware fallback: if target_span is a known entity term or substring
+        # of one, check whether it appears as part of any known entity term in the text.
+        # This handles cases where the LLM picks a short entity form (e.g. "সোনালী")
+        # that is embedded inside the full entity ("সোনালী ব্যাংক").
+        plan_entities = plan.target_claim.entities
+        if plan_entities and any(target_span in entity or entity in target_span for entity in plan_entities):
+            logger.info(
+                "Entity-aware match for target_span '%s' in article %s (entities=%s)",
+                target_span, article.article_id, plan_entities,
+            )
+            return None
+        logger.warning(
+            "Plan target_span '%s' not found in article %s sentence %d (normalized check also failed)",
+            target_span,
+            article.article_id,
+            target_index,
+        )
+        return ArticleProcessOutcome(
+            failure={
+                "article_id": article.article_id,
+                "reason": "target_span_not_found_in_article",
+                "target_span": target_span,
+                "target_index": target_index,
+                "rewrite_plan": plan.to_dict(),
+            }
+        )
 
     def _generate_article(self, planned: PlannedArticle) -> ArticleProcessOutcome:
         return self._generate_article_batch([planned])[0]

@@ -10,6 +10,7 @@ from src.generation.prompts import PROMPT_VERSION, build_rewrite_prompt
 from src.generation.utils import (
     artifact_reasons,
     has_text_artifacts,
+    normalize_digits,
     replace_all_exact,
     replace_first_exact,
     sentence_spans,
@@ -101,6 +102,19 @@ class RewriteGenerator:
             rewritten_article = replace_all_exact(article.text, target_span, replacement)
             rewritten_headline = replace_all_exact(article.headline, target_span, replacement)
             quality_text = replace_first_exact(target.text, target_span, replacement)
+            # Log when entity appears outside the target sentence — this is
+            # intentional (linked mentions are always replaced for consistency)
+            # but worth tracking for quality review.
+            non_target_spans = [s for s in original_spans if s.index != target_index]
+            non_target_occurrences = sum(1 for s in non_target_spans if target_span in s.text)
+            if non_target_occurrences:
+                logger.info(
+                    "Entity replacement '%s'->'%s' touched %d non-target sentence(s) in %s",
+                    target_span,
+                    replacement,
+                    non_target_occurrences,
+                    article.article_id,
+                )
         else:
             rewritten_sentence = replace_first_exact(target.text, target_span, replacement)
             rewritten_article = article.text[: target.start] + rewritten_sentence + article.text[target.end :]
@@ -216,6 +230,17 @@ class RewriteGenerator:
             matches = [span.text.strip() for span in generated_spans if replacement in span.text or span_occurs_as_term(span.text, replacement)]
             if len(matches) == 1:
                 return matches[0]
+            # Try normalized-digit matching before giving up — the generator
+            # may have output Bengali numerals where the plan uses ASCII
+            # (or vice versa).
+            normalized_replacement = normalize_digits(replacement)
+            normalized_matches = [
+                span.text.strip()
+                for span in generated_spans
+                if normalized_replacement in normalize_digits(span.text)
+            ]
+            if len(normalized_matches) == 1:
+                return normalized_matches[0]
             raise RuntimeError("Generation output contains multiple sentences and no unique planned replacement sentence")
         return generated_spans[0].text.strip()
 
