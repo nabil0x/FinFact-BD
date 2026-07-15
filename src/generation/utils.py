@@ -438,9 +438,24 @@ def span_occurs_as_term(text: str, span: str) -> bool:
     span = span.strip()
     if not span:
         return False
+    # Exact boundary match: span not adjacent to Bengali chars or digits
     escaped = re.escape(span)
     pattern = rf"(?<![\u0980-\u09FF0-9\u09e6-\u09ef]){escaped}(?![\u0980-\u09FF0-9\u09e6-\u09ef])"
-    return re.search(pattern, text) is not None or span in text.split()
+    if re.search(pattern, text) is not None:
+        return True
+    if span in text.split():
+        return True
+    # Normalized digit fallback: compare after converting ASCII↔Bangla digits.
+    # Try candidate spans with digits replaced (Bangla→ASCII, ASCII→Bangla).
+    norm_span = normalize_digits(span)
+    norm_text = normalize_digits(text)
+    norm_escaped = re.escape(norm_span)
+    norm_pattern = rf"(?<![\u0980-\u09FF0-9]){norm_escaped}(?![\u0980-\u09FF0-9])"
+    if re.search(norm_pattern, norm_text) is not None:
+        return True
+    if norm_span in norm_text.split():
+        return True
+    return False
 
 
 def extract_entities(text: str) -> List[str]:
