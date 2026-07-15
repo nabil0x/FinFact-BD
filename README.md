@@ -22,8 +22,9 @@ constrained generation, and independently verifies that the output satisfies all
 required constraints before acceptance.
 
 The generation model does not decide what misinformation to create. Its role is
-limited to expressing a planned factual modification in natural Bangla while
-preserving the style, coherence, and unrelated facts of the original article.
+limited to expressing a planned factual modification in natural Bangla. The
+model outputs only the rewritten target sentence; the pipeline reconstructs the
+complete article by splicing that sentence back into the original context.
 
 The resulting benchmark consists of localized, auditable, human-legible factual
 distortions rather than unrestricted synthetic news.

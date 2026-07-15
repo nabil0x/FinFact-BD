@@ -88,12 +88,14 @@ def sample_attempts(samples: Iterable[Dict[str, Any]]) -> List[int]:
 
 
 def memory_metrics(log_text: str) -> Dict[str, Any]:
-    gpu_values = [int(value) for value in re.findall(r"gpu_memory_allocated_mb=(\d+)", log_text)]
+    peak_gpu_values = [int(value) for value in re.findall(r"gpu_memory_peak_allocated_mb=(\d+)", log_text)]
+    current_gpu_values = [int(value) for value in re.findall(r"gpu_memory_allocated_mb=(\d+)", log_text)]
     ram_values = [float(value) for value in re.findall(r"cpu_ram_used_gb=([0-9.]+)", log_text)]
     return {
-        "peak_gpu_memory_mb": max(gpu_values) if gpu_values else None,
+        "peak_gpu_memory_mb": max(peak_gpu_values or current_gpu_values) if peak_gpu_values or current_gpu_values else None,
+        "last_gpu_memory_mb": current_gpu_values[-1] if current_gpu_values else None,
         "peak_cpu_ram_gb": max(ram_values) if ram_values else None,
-        "note": "memory fields require pipeline logs with gpu_memory_allocated_mb/cpu_ram_used_gb entries",
+        "note": "memory fields require pipeline logs with gpu_memory_*_mb/cpu_ram_used_gb entries",
     }
 
 

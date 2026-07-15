@@ -315,10 +315,15 @@ class PlanningGuidedRewritePipeline:
         snapshot = memory_snapshot()
         self.metrics.counters["memory_snapshots"] = self.metrics.counters.get("memory_snapshots", 0) + 1
         logger.info(
-            "memory stage=%s gpu_memory_allocated_mb=%s gpu_memory_reserved_mb=%s cpu_ram_used_gb=%s",
+            (
+                "memory stage=%s gpu_memory_allocated_mb=%s gpu_memory_reserved_mb=%s "
+                "gpu_memory_peak_allocated_mb=%s gpu_memory_peak_reserved_mb=%s cpu_ram_used_gb=%s"
+            ),
             stage,
             snapshot["gpu_memory_allocated_mb"],
             snapshot["gpu_memory_reserved_mb"],
+            snapshot["gpu_memory_peak_allocated_mb"],
+            snapshot["gpu_memory_peak_reserved_mb"],
             snapshot["cpu_ram_used_gb"],
         )
 

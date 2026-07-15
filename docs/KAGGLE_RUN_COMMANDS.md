@@ -123,7 +123,7 @@ The pipeline is staged by model role, not by article:
 ```text
 all pending articles -> heuristic claim extraction
 planned candidates -> Qwen rewrite planning -> release Qwen
-all planned articles -> Aya rewrite/regeneration
+all planned articles -> Aya sentence-level rewrite/regeneration
 verification starts -> lazy-load e5/NLI/BanglaBERT -> batched verification
 run complete -> release verifier stack -> release Aya
 ```
@@ -132,6 +132,12 @@ For a five-sample smoke or a 20-sample pilot, Qwen, Aya, e5, NLI, and BanglaBERT
 should each load once per pipeline run. Qwen should appear during planning, not
 during claim extraction. If logs show any model loading once per article, stop
 the run and update the repository before scaling.
+
+Aya should output only the rewritten selected sentence. The pipeline then
+splices that sentence into the original article before verification and export.
+If logs show very long generation times, inspect the prompt version and
+`generation.max_new_tokens`; full-article decoding is no longer the intended
+path.
 
 Verifier batch size is controlled by `verification.batch_size` in
 `configs/rewrite_pipeline.yaml`. The default is `8`, which is intentionally
@@ -201,6 +207,15 @@ Scripts write logs under `logs/`:
 | `logs/rewrite_smoke.log` | smoke generation |
 | `logs/rewrite_pilot.log` | pilot generation |
 | `logs/rewrite_full.log` | full/resume generation |
+
+Memory log lines include current and peak GPU memory:
+
+```text
+gpu_memory_allocated_mb=<current> gpu_memory_peak_allocated_mb=<peak>
+```
+
+Use the peak field for capacity planning and the current field to check whether
+model release actually frees memory.
 
 ## Outputs
 

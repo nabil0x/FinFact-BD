@@ -94,7 +94,13 @@ class RewriteGenerator:
         for fence in fences:
             if text.startswith(fence) and text.endswith(fence):
                 text = text[len(fence) : -len(fence)].strip()
-        for prefix in ("Complete rewritten article:", "পুনর্লিখিত নিবন্ধ:"):
+        for prefix in (
+            "Complete rewritten article:",
+            "Rewritten selected sentence:",
+            "পুনর্লিখিত নিবন্ধ:",
+            "পুনর্লিখিত নির্বাচিত বাক্য:",
+            "নির্বাচিত বাক্য:",
+        ):
             if text.startswith(prefix):
                 text = text[len(prefix) :].strip()
         return text

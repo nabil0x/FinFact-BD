@@ -19,7 +19,7 @@ class GenerationModel(Protocol):
         seeds: List[int],
         max_new_tokens: int,
     ) -> List[str]:
-        """Generate one complete rewritten article per prompt."""
+        """Generate one constrained rewrite response per prompt."""
 
 
 class InstructionModel(Protocol):
@@ -119,7 +119,7 @@ class HuggingFaceCausalLMGenerator:
             formatted = self._format_prompt(prompt)
             inputs = self._tokenizer(formatted, return_tensors="pt", truncation=True, max_length=4096)
             inputs = {key: value.to(self._model.device) for key, value in inputs.items()}
-            with self._torch.no_grad():
+            with self._torch.inference_mode():
                 generate_kwargs: Dict[str, Any] = {
                     "max_new_tokens": max_new_tokens,
                     "do_sample": temperature > 0.0,

@@ -55,6 +55,9 @@ claim_extraction:
 planner:
   backend: "llm_json"
   max_new_tokens: 384
+
+generation:
+  max_new_tokens: 192
 ```
 
 Rationale:
@@ -62,6 +65,9 @@ Rationale:
 - Heuristic extraction gives `99.65%` article coverage at `max_sentences=20`.
 - It removes the observed `~3-4 minutes/article` Qwen extraction bottleneck.
 - Qwen remains in the pipeline for structured rewrite planning.
+- Aya is constrained to output only the rewritten target sentence; the pipeline
+  splices that sentence back into the full article. This avoids full-article
+  decoding while preserving complete-article exports.
 - The claim selection stage still ranks by importance, editability, locality,
   verification feasibility, and risk.
 - `configs/rewrite_pipeline_llm_extraction.yaml` preserves the slower full LLM

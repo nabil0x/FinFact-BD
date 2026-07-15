@@ -52,11 +52,35 @@ def memory_snapshot() -> Dict[str, float | int | None]:
     return {
         "gpu_memory_allocated_mb": _gpu_memory_allocated_mb(),
         "gpu_memory_reserved_mb": _gpu_memory_reserved_mb(),
+        "gpu_memory_peak_allocated_mb": _gpu_memory_peak_allocated_mb(),
+        "gpu_memory_peak_reserved_mb": _gpu_memory_peak_reserved_mb(),
         "cpu_ram_used_gb": _cpu_ram_used_gb(),
     }
 
 
 def _gpu_memory_allocated_mb() -> int | None:
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return int(torch.cuda.memory_allocated() / (1024 * 1024))
+    except ImportError:
+        return None
+    return None
+
+
+def _gpu_memory_reserved_mb() -> int | None:
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return int(torch.cuda.memory_reserved() / (1024 * 1024))
+    except ImportError:
+        return None
+    return None
+
+
+def _gpu_memory_peak_allocated_mb() -> int | None:
     try:
         import torch
 
@@ -67,7 +91,7 @@ def _gpu_memory_allocated_mb() -> int | None:
     return None
 
 
-def _gpu_memory_reserved_mb() -> int | None:
+def _gpu_memory_peak_reserved_mb() -> int | None:
     try:
         import torch
 

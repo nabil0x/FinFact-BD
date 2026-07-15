@@ -40,7 +40,7 @@ planner:
   json_repair_attempts: 1
 
 generation:
-  max_new_tokens: 1024
+  max_new_tokens: 192
   temperature: 0.4
 
 regeneration:

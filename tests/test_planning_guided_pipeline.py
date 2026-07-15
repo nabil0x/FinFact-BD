@@ -20,12 +20,7 @@ class FakeGenerator:
     model_revision = "test"
 
     def generate_batch(self, prompts, temperatures, seeds, max_new_tokens):
-        outputs = []
-        for prompt in prompts:
-            article = prompt.rsplit("Original complete article:", 1)[-1]
-            article = article.rsplit("Complete rewritten article:", 1)[0].strip()
-            outputs.append(article.replace("১০ শতাংশ", "৭ শতাংশ", 1))
-        return outputs
+        return ["বাংলাদেশ ব্যাংক নীতিগত সুদের হার ৭ শতাংশ বাড়িয়েছে।" for _ in prompts]
 
 
 class FakeEmbedder:

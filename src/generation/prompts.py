@@ -6,7 +6,7 @@ from src.generation.metadata import Article, RankedClaim, RewritePlan
 from src.generation.utils import context_window
 
 
-PROMPT_VERSION = "planning-guided-v2"
+PROMPT_VERSION = "planning-guided-v3-sentence-only"
 
 SYSTEM_INSTRUCTION = (
     "You are one component in a constrained Bangla financial misinformation "
@@ -71,10 +71,10 @@ def build_rewrite_prompt(article: Article, plan: RewritePlan, attempt: int) -> s
         "- Rewrite only the selected claim sentence.\n"
         "- Preserve all unrelated facts, entities, dates, numbers, quotes, and attributions.\n"
         "- Do not add background, explanations, or unsupported facts.\n"
-        "- Output the complete rewritten article, not only the sentence.\n"
+        "- Output only one sentence: the rewritten selected claim sentence.\n"
+        "- Do not output the full article.\n"
         "- Do not output Markdown, labels, analysis, or explanations.\n\n"
-        f"Original complete article:\n{article.text}\n\n"
-        "Complete rewritten article:"
+        "Rewritten selected sentence:"
     )
 
 
