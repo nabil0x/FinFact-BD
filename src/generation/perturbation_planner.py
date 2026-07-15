@@ -81,8 +81,8 @@ class PerturbationPlanner:
         claim = ranked_claim.claim
         if family == "numerical_fact":
             return (
-                "Rewrite the selected claim so one financial number changes to a plausible but false value.",
-                "The target numerical proposition changes while all non-target facts remain unchanged.",
+                "Rewrite the selected claim so one financial number changes by a meaningful economic scale.",
+                "The target numerical proposition crosses a scale boundary while all non-target facts remain unchanged.",
             )
         if family == "policy_reversal":
             return (
@@ -91,18 +91,18 @@ class PerturbationPlanner:
             )
         if family == "entity_replacement":
             return (
-                "Rewrite the selected claim by replacing the central financial entity with a comparable entity.",
-                "Only the target entity in the selected proposition changes.",
+                "Rewrite the selected claim by replacing the central entity with a wrong-belonging different-role entity.",
+                "Only the target entity changes, and the replacement is not a same-class peer.",
             )
         if family == "temporal_shift":
             return (
-                "Rewrite the selected claim by shifting its time reference to another plausible time.",
+                "Rewrite the selected claim by shifting its time reference to a contradictory time frame.",
                 "The time anchor changes while the rest of the claim remains stable.",
             )
         if family == "causal_inversion":
             return (
-                "Rewrite the selected claim so the cause-effect relation is inverted or contradicted.",
-                "The causal proposition changes without introducing unrelated events.",
+                "Rewrite the selected claim so the same cause produces an opposite or implausible economic effect.",
+                "The causal proposition changes without merely swapping clause order or introducing unrelated events.",
             )
         raise ValueError(f"Unsupported rewrite family: {family}")
 

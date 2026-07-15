@@ -6,7 +6,7 @@ from src.generation.metadata import Article, RankedClaim, RewritePlan
 from src.generation.utils import context_window
 
 
-PROMPT_VERSION = "planning-guided-v4-rulebook"
+PROMPT_VERSION = "planning-guided-v5-rulebook"
 
 SYSTEM_INSTRUCTION = (
     "You are one component in a constrained Bangla financial misinformation "
@@ -21,24 +21,51 @@ VARIANT_INSTRUCTIONS = (
 
 FAMILY_RULES = {
     "numerical_fact": (
-        "Change a financial number by a meaningful scale, not a small adjustment. "
-        "Skip dates. Preserve units coherently. Examples: ৫০ লাখ -> ৫ কোটি, ১ শতাংশ -> ১০ শতাংশ."
+        "Create a high-contrast numerical contradiction, not a cosmetic edit. Prefer crossing scale "
+        "boundaries such as লাখ->কোটি, কোটি->লাখ/হাজার, ১ শতাংশ->১০ শতাংশ, ১৫০ ডলার->১৫০০ ডলার. "
+        "If the original amount is small, inflate it sharply; if it is large, deflate it sharply. "
+        "Keep the economic unit coherent and skip dates, years, fiscal years, and ordinal event dates. "
+        "Good examples: ৫০ লাখ টাকার->৫ কোটি টাকার; ৩ লাখ ডলার->৩০ লাখ ডলার; "
+        "১ শতাংশ->১০ শতাংশ; ১৫০ মার্কিন ডলার->১৫০০ মার্কিন ডলার; ২০ কারখানা->২০০ কারখানা. "
+        "Bad examples: ৫০ লাখ->৪৫ লাখ, ১শ->১০০, ২০১৪-১৫->২০১৫-১৬."
     ),
     "entity_replacement": (
-        "Replace the entity with a different-role or wrong-belonging entity, not a same-class peer. "
-        "If linked mentions exist in headline/context, they must remain consistent."
+        "Replace the entity with a wrong-belonging or different-role actor, not a same-class peer. "
+        "Avoid ADB->World Bank, one bank->another bank, or one regulator->another regulator. Prefer "
+        "cross-role contradictions such as development bank->foreign state, regulator->private company, "
+        "bank->telecom/company, or company->ministry when the sentence stays grammatical. If linked "
+        "mentions in headline/context would expose the swap, choose another local entity or another family. "
+        "Good examples: এডিবি->ইসরায়েল সরকার; বাংলাদেশ ব্যাংক->ওয়ালটন; সিটি ব্যাংক->রবি; "
+        "বিএসইসি->বসুন্ধরা গ্রুপ; মাহিন্দ্রা->অর্থ মন্ত্রণালয়. "
+        "Bad examples: এডিবি->বিশ্বব্যাংক, সিটি ব্যাংক->ব্র্যাক ব্যাংক, বিএসইসি->বাংলাদেশ ব্যাংক."
     ),
     "temporal_shift": (
-        "Change the time frame so it contradicts the original time claim. "
-        "Use dates, months, years, fiscal years, or reporting periods only."
+        "Change the reporting time anchor so the claim becomes temporally false. Use only dates, months, "
+        "years, fiscal years, deadlines, quarters, or reporting periods. Prefer meaningful shifts: current "
+        "period->previous/future period, deadline moved earlier/later, fixed event date moved to a conflicting "
+        "date. Do not rewrite numeric amounts as temporal facts. "
+        "Good examples: চলতি জুলাই মাসে->গত ডিসেম্বর মাসে; ২০১৫-১৬ অর্থবছরে->২০১২-১৩ অর্থবছরে; "
+        "গত মঙ্গলবার->আগামী মঙ্গলবার; ১৫ আগস্ট->২৫ আগস্ট; ডিসেম্বর শেষে->জুন শেষে. "
+        "Bad examples: ৫০ লাখ->৫ কোটি, ৩ লাখ ডলার->৩০ লাখ ডলার."
     ),
     "policy_reversal": (
-        "Reverse the policy direction clearly: approval vs rejection, increase vs decrease, "
-        "implementation vs suspension, barrier removed vs barrier increased."
+        "Reverse the policy or market direction with clear Bangla news phrasing. Map approval->rejection, "
+        "implementation->suspension, withdrawal->reinstatement, increase->decrease, relief->restriction, "
+        "barrier removed->barrier increased. Use direct replacements like অনুমোদন করেছে->অনুমোদন দেয়নি, "
+        "কমিয়েছে->বাড়িয়েছে, চালুর বাধা কাটল->চালুর বাধা আরও বেড়েছে. Avoid vague invented phrases. "
+        "Good examples: অনুমোদন করেছে->অনুমোদন দেয়নি; কমিয়েছে->বাড়িয়েছে; প্রত্যাহার করেছে->বহাল রেখেছে; "
+        "চালুর বাধা কাটল->চালুর বাধা আরও বেড়েছে; ছাড় দেবে->ছাড় দেবে না; স্থগিত করেছে->কার্যকর করেছে. "
+        "Bad examples: সিদ্ধান্ত পরিবর্তন করা হয়েছে, বিষয়টি পুনর্বিবেচনা করা হয়েছে, প্রক্রিয়া চলছে."
     ),
     "causal_inversion": (
-        "Do not merely swap sentence order. Preserve the cause when possible and change the effect "
-        "to an economically opposite or implausible effect."
+        "Invert the economic logic, not the word order. Preserve the stated cause when possible and replace "
+        "the effect with the opposite or implausible effect: import cost rises->reserves increase, revenue "
+        "falls->budget capacity improves, inflation rises->consumer pressure eases, losses grow->profit rises. "
+        "Do not merely swap clauses; the rewritten claim must assert a logically contradictory cause-effect link. "
+        "Good examples: আমদানি ব্যয় বেড়ে যাওয়ার কারণে রিজার্ভে চাপ সৃষ্টি হয়েছে->আমদানি ব্যয় বেড়ে যাওয়ার কারণে রিজার্ভ বেড়েছে; "
+        "মূল্যস্ফীতি বাড়ায় ভোক্তার চাপ বেড়েছে->মূল্যস্ফীতি বাড়ায় ভোক্তার চাপ কমেছে; "
+        "রাজস্ব কমায় ঘাটতি বেড়েছে->রাজস্ব কমায় ঘাটতি কমেছে; লোকসান বাড়ায় মুনাফা কমেছে->লোকসান বাড়ায় মুনাফা বেড়েছে. "
+        "Bad examples: রিজার্ভে চাপ সৃষ্টি হওয়ায় আমদানি ব্যয় বেড়েছে, because that only swaps cause and effect."
     ),
 }
 
