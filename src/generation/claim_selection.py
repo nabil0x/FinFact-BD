@@ -53,6 +53,9 @@ class ClaimRanker:
         ranked = self.rank(article, claims)
         return ranked[0] if ranked else None
 
+    def select_all_ranked(self, article: Article, claims: List[Claim]) -> List[RankedClaim]:
+        return self.rank(article, claims)
+
     def _score(self, article: Article, claim: Claim) -> RankedClaim:
         importance = self._importance(article, claim)
         editability = self._editability(claim)
