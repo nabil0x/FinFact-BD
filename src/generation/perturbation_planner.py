@@ -22,6 +22,7 @@ from src.generation.utils import (
     numeric_unit_mismatch_reason,
     numeric_values,
     numeric_values_equivalent,
+    significant_count_change,
     significant_numeric_scale_change,
     span_occurs_as_term,
 )
@@ -363,9 +364,14 @@ def validate_rewrite_plan(plan: RewritePlan) -> None:
             unit_reason = numeric_unit_mismatch_reason(plan.target_span, plan.replacement)
             if unit_reason:
                 raise ValueError(f"Numerical plan replacement has incompatible units: {unit_reason}")
-        if plan.replacement and numeric_values_equivalent(plan.target_span, plan.replacement):
+        count_scale_change = bool(plan.replacement and significant_count_change(plan.target_span, plan.replacement))
+        if plan.replacement and not count_scale_change and numeric_values_equivalent(plan.target_span, plan.replacement):
             raise ValueError("Numerical plan replacement is value-equivalent to target_span")
-        if plan.replacement and not significant_numeric_scale_change(plan.target_span, plan.replacement):
+        if (
+            plan.replacement
+            and not count_scale_change
+            and not significant_numeric_scale_change(plan.target_span, plan.replacement)
+        ):
             raise ValueError("Numerical plan replacement is not a significant scale contradiction")
     if plan.family == "policy_reversal":
         if not (claim.policies or any(term in claim.sentence for term in ("বৃদ্ধি", "হ্রাস", "কম", "বাড়", "প্রয়োজন", "বাধা"))):

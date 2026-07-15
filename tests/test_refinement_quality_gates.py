@@ -205,7 +205,7 @@ def test_artifact_detector_allows_valid_consultancy_word():
     assert "suspicious_bangla_fragment" in artifact_reasons("ফ্রি ভিসা ও মেডিকেল কনসা।")
 
 
-def test_numerical_plan_allows_strong_cross_unit_replacements():
+def test_numerical_plan_allows_strong_scale_replacements_and_rejects_count_percentages():
     claim = Claim(
         sentence_index=0,
         sentence="উদ্বোধন উপলক্ষে মোড়কজাত ৫৬ টাকার চিনির প্যাকেট সরবরাহ করা হয়।",
@@ -256,7 +256,7 @@ def test_numerical_plan_allows_strong_cross_unit_replacements():
         dates=[],
         confidence=0.9,
     )
-    bad_count_plan = RewritePlan(
+    good_count_plan = RewritePlan(
         family="numerical_fact",
         target_claim=count_claim,
         edit_instruction="Change the country count.",
@@ -264,14 +264,49 @@ def test_numerical_plan_allows_strong_cross_unit_replacements():
         expected_change="The country count changes.",
         verification_constraints={},
         target_span="১শ’টির বেশি",
+        replacement="২শ’টির বেশি",
+    )
+    stronger_count_plan = RewritePlan(
+        family="numerical_fact",
+        target_claim=count_claim,
+        edit_instruction="Change the country count.",
+        edit_scope="target_sentence",
+        expected_change="The country count changes.",
+        verification_constraints={},
+        target_span="১শ’টির বেশি",
+        replacement="৫শ’টির বেশি",
+    )
+    count_to_percent_plan = RewritePlan(
+        family="numerical_fact",
+        target_claim=count_claim,
+        edit_instruction="Change the country count into a percentage.",
+        edit_scope="target_sentence",
+        expected_change="The country count changes.",
+        verification_constraints={},
+        target_span="১শ’টির বেশি",
         replacement="১০০ শতাংশ",
+    )
+    scaled_percent_plan = RewritePlan(
+        family="numerical_fact",
+        target_claim=count_claim,
+        edit_instruction="Change the country count into an impossible scaled percentage.",
+        edit_scope="target_sentence",
+        expected_change="The country count changes.",
+        verification_constraints={},
+        target_span="১শ’টির বেশি",
+        replacement="১ কোটি শতাংশ",
     )
 
     validate_rewrite_plan(bad_money_plan)
-    validate_rewrite_plan(bad_count_plan)
+    validate_rewrite_plan(good_count_plan)
+    validate_rewrite_plan(stronger_count_plan)
     validate_rewrite_plan(good_money_plan)
     with pytest.raises(ValueError, match="incompatible units"):
         validate_rewrite_plan(money_to_percent_plan)
+    with pytest.raises(ValueError, match="count_percentage"):
+        validate_rewrite_plan(count_to_percent_plan)
+    with pytest.raises(ValueError, match="count_percentage"):
+        validate_rewrite_plan(scaled_percent_plan)
 
 
 def test_numeric_contradiction_verifier_accepts_strong_scale_rule_when_nli_is_low():
@@ -280,8 +315,8 @@ def test_numeric_contradiction_verifier_accepts_strong_scale_rule_when_nli_is_lo
         headline="মাহিন্দ্রা ব্যবসা করে",
         text="বিশ্বের ১শ’টির বেশি দেশে ব্যবসা পরিচালনাকারী প্রায় ২০ বিলিয়ন ডলারের কোম্পানি মাহিন্দ্রা।",
     )
-    plan = numerical_plan(target_span="১শ’টির বেশি", replacement="১০০ শতাংশ")
-    rewritten = "বিশ্বের ১০০ শতাংশ দেশে ব্যবসা পরিচালনাকারী প্রায় ২০ বিলিয়ন ডলারের কোম্পানি মাহিন্দ্রা।"
+    plan = numerical_plan(target_span="১শ’টির বেশি", replacement="২শ’টির বেশি")
+    rewritten = "বিশ্বের ২শ’টির বেশি দেশে ব্যবসা পরিচালনাকারী প্রায় ২০ বিলিয়ন ডলারের কোম্পানি মাহিন্দ্রা।"
 
     result = ContradictionVerifier(LowContradictionNLI()).verify(article, rewritten, plan)
 

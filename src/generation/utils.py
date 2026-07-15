@@ -19,7 +19,7 @@ BANGLA_DECIMAL_RE = re.compile(rf"({DIGIT_PATTERN})\s+দশমিক\s+({DIGIT_
 NUMERIC_TOKEN_RE = re.compile(rf"({DECIMAL_PATTERN})(?:\s*(?:শ|শত|শতাংশ|%))?")
 SCALE_NUMERIC_RE = re.compile(
     rf"({DIGIT_PATTERN}\s+দশমিক\s+{DIGIT_PATTERN}|{DECIMAL_PATTERN})"
-    r"\s*(কোটি|লাখ|হাজার|শ|শত|শতাংশ|ভাগ|%|ডলার|টাকা|টাকার|টি|জন)?"
+    r"\s*(কোটি|লাখ|হাজার|শতাংশ|শত|শ|ভাগ|%|ডলার|টাকা|টাকার|টি|জন)?"
 )
 MONEY_UNIT_RE = re.compile(r"(?:টাকা|টাকার|ডলার|মার্কিন ডলার)")
 NUMERIC_SCALE_WORD_RE = re.compile(r"(?:কোটি|লাখ|হাজার)")
@@ -359,13 +359,34 @@ def significant_numeric_scale_change(original: str, rewritten: str, min_factor: 
     return ratio > min_factor or ratio < (1.0 / min_factor)
 
 
+def significant_count_change(original: str, rewritten: str, min_factor: float = 2.0) -> bool:
+    original_profile = _numeric_unit_profile(original)
+    rewritten_profile = _numeric_unit_profile(rewritten)
+    if not original_profile["count"] or rewritten_profile["money"] or rewritten_profile["percent"]:
+        return False
+    original_values = scaled_numeric_values(original)
+    rewritten_values = scaled_numeric_values(rewritten)
+    if not original_values or not rewritten_values:
+        return False
+    original_value = original_values[0]
+    rewritten_value = rewritten_values[0]
+    if original_value == rewritten_value:
+        return False
+    if original_value == 0:
+        return rewritten_value != 0
+    ratio = abs(rewritten_value / original_value)
+    return ratio >= min_factor or ratio <= (1.0 / min_factor)
+
+
 def numeric_unit_mismatch_reason(target: str, replacement: str) -> str | None:
     target_profile = _numeric_unit_profile(target)
     replacement_profile = _numeric_unit_profile(replacement)
     if not target_profile["has_numeric"] or not replacement_profile["has_numeric"]:
         return None
     if target_profile["count"] and not target_profile["money"] and replacement_profile["percent"]:
-        return None
+        return "numeric_unit_mismatch_count_percentage"
+    if replacement_profile["percent"] and replacement_profile["scale"]:
+        return "numeric_unit_mismatch_scaled_percentage"
     if target_profile["percent"] != replacement_profile["percent"]:
         return "numeric_unit_mismatch_percent"
     if target_profile["money"] != replacement_profile["money"]:

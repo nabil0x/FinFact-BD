@@ -11,6 +11,7 @@ from src.generation.utils import (
     numeric_unit_mismatch_reason,
     numeric_values,
     scaled_numeric_values,
+    significant_count_change,
     significant_numeric_scale_change,
     span_occurs_as_term,
 )
@@ -58,9 +59,10 @@ def _numeric_change(original: str, rewritten: str, plan: RewritePlan) -> Tuple[f
         if unit_reason:
             details["unit_mismatch"] = unit_reason
             return 0.25, False, unit_reason, details
-    if original_values == rewritten_values:
+    count_scale_change = bool(plan.replacement and significant_count_change(plan.target_span, plan.replacement))
+    if original_values == rewritten_values and not count_scale_change:
         return 0.0, False, "numeric_value_unchanged", details
-    if plan.replacement and not significant_numeric_scale_change(plan.target_span, plan.replacement):
+    if plan.replacement and not count_scale_change and not significant_numeric_scale_change(plan.target_span, plan.replacement):
         return 0.35, False, "numeric_scale_change_too_weak", details
     if not plan.replacement and not significant_numeric_scale_change(original, rewritten):
         return 0.35, False, "numeric_scale_change_too_weak", details

@@ -25,9 +25,12 @@ FAMILY_RULES = {
         "boundaries such as লাখ->কোটি, কোটি->লাখ/হাজার, ১ শতাংশ->১০ শতাংশ, ১৫০ ডলার->১৫০০ ডলার. "
         "If the original amount is small, inflate it sharply; if it is large, deflate it sharply. "
         "Keep the economic unit coherent and skip dates, years, fiscal years, and ordinal event dates. "
+        "For count facts, keep the replacement as a count, not a percentage: use ১শ’টির বেশি->২শ’টির বেশি "
+        "or ১শ’টির বেশি->৫শ’টির বেশি, never ১০০ শতাংশ or কোটি শতাংশ. "
         "Good examples: ৫০ লাখ টাকার->৫ কোটি টাকার; ৩ লাখ ডলার->৩০ লাখ ডলার; "
-        "১ শতাংশ->১০ শতাংশ; ১৫০ মার্কিন ডলার->১৫০০ মার্কিন ডলার; ২০ কারখানা->২০০ কারখানা. "
-        "Bad examples: ৫০ লাখ->৪৫ লাখ, ১শ->১০০, ২০১৪-১৫->২০১৫-১৬."
+        "১ শতাংশ->১০ শতাংশ; ১৫০ মার্কিন ডলার->১৫০০ মার্কিন ডলার; ২০ কারখানা->২০০ কারখানা; "
+        "১শ’টির বেশি->৫শ’টির বেশি. "
+        "Bad examples: ৫০ লাখ->৪৫ লাখ, ১শ->১০০, ১শটির বেশি->১০০ শতাংশ, ১শটির বেশি->১ কোটি শতাংশ, ২০১৪-১৫->২০১৫-১৬."
     ),
     "entity_replacement": (
         "Replace the entity with a wrong-belonging or different-role actor, not a same-class peer. "
@@ -236,7 +239,7 @@ def build_plan_review_prompt(ranked_claim: RankedClaim, plan: RewritePlan, allow
         "- Keep replacement short and directly usable for exact phrase replacement.\n"
         "- Do not choose a family outside the allowed families.\n\n"
         "Family review checklist:\n"
-        "- numerical_fact: accept high-contrast scale contradictions. Allow readable count->percentage and price->crore changes. Reject weak/value-equivalent changes and incoherent money->percentage changes.\n"
+        "- numerical_fact: accept high-contrast scale contradictions. Keep count facts as counts, e.g. ১শ’টির বেশি->৫শ’টির বেশি. Allow price->crore changes. Reject count->percentage, weak/value-equivalent changes, scaled percentage phrases like কোটি শতাংশ, and incoherent money->percentage changes.\n"
         "- entity_replacement: replacement must be a different-role or wrong-belonging actor, not a same-role peer.\n"
         "- temporal_shift: target/replacement must be time anchors, not financial amounts.\n"
         "- policy_reversal: replacement must be a clear opposite direction, not vague wording like পুনর্বিবেচনা or পরিবর্তন.\n"
@@ -289,6 +292,7 @@ def build_planning_validation_repair_prompt(
         "- Fix the validation error directly.\n"
         "- Keep target_span as an exact short span from the selected claim sentence.\n"
         "- If numerical, choose a significant high-contrast contradiction; cross-unit changes are allowed when readable.\n"
-        "- If entity replacement, do not use a same-role peer entity.\n\n"
+        "- If the target is a count, keep it as a count, e.g. ১শ’টির বেশি -> ২শ’টির বেশি or ৫শ’টির বেশি; do not use percentages.\n"
+        "- If entity replacement, do not use a same-role peer entity; choose a wrong-role actor instead.\n\n"
         "Valid repaired JSON:"
     )

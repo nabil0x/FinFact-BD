@@ -184,9 +184,10 @@ Interpretation:
 
 The following fixes were implemented after the 5/10 pilot result and should be committed before the next Kaggle run:
 
-- Added numeric contradiction validation with user-approved high-contrast cross-unit allowances:
-  - allows count -> percentage when it is an intentional coverage contradiction, e.g. `১শ’টির বেশি` -> `১০০ শতাংশ`;
+- Added numeric contradiction validation with user-approved high-contrast rules:
+  - count facts should remain count facts, e.g. `১শ’টির বেশি` -> `২শ’টির বেশি` or `৫শ’টির বেশি`;
   - allows bare price -> crore/lakh when it is an intentional scale contradiction, e.g. `৫৬ টাকার` -> `৫ কোটি টাকার`;
+  - rejects count -> percentage, e.g. `১শ’টির বেশি` -> `১০০ শতাংশ`;
   - still rejects incoherent money -> percentage changes, e.g. `৫৬ টাকার` -> `১০০ শতাংশ`;
   - still rejects weak/value-equivalent numerical changes.
 - Added deterministic numeric contradiction override after NLI scoring:
@@ -203,6 +204,11 @@ The following fixes were implemented after the 5/10 pilot result and should be c
   - reviewer repairs are validated deterministically before use;
   - malformed reviewer output falls back to the already-valid plan instead of failing the article.
   - current configs set `plan_review_attempts: 1`; set it to `0` for faster large runs.
+- After the 8/10 plan-review pilot, tightened count handling:
+  - `১শ’টির বেশি` -> `১০০ শতাংশ` is now rejected;
+  - count rewrites should use count expressions such as `২শ’টির বেশি` or `৫শ’টির বেশি`;
+  - scaled percentage phrases such as `১ কোটি শতাংশ` are rejected as incoherent;
+  - validation repair now gets two attempts and explicitly avoids same-role entities and count percentages.
 
 Validation after these local fixes:
 

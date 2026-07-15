@@ -16,6 +16,7 @@ from src.generation.utils import (
     extract_entities,
     extract_numbers,
     numeric_unit_mismatch_reason,
+    significant_count_change,
     sentence_spans,
     significant_numeric_scale_change,
     span_occurs_as_term,
@@ -231,7 +232,10 @@ class ContradictionVerifier:
             return None
         if numeric_unit_mismatch_reason(target_span, replacement):
             return None
-        if not significant_numeric_scale_change(target_span, replacement):
+        if not significant_numeric_scale_change(target_span, replacement) and not significant_count_change(
+            target_span,
+            replacement,
+        ):
             return None
         if replacement not in hypothesis and not span_occurs_as_term(hypothesis, replacement):
             return None
