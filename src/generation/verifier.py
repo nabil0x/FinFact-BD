@@ -192,6 +192,12 @@ class ContradictionVerifier:
                     rewritten_spans[idx].text,
                     plan,
                 )
+            if deterministic is None:
+                deterministic = self._deterministic_entity_contradiction(
+                    original_spans[idx].text,
+                    rewritten_spans[idx].text,
+                    plan,
+                )
             deterministic_results[batch_idx] = deterministic
             valid_indices.append(batch_idx)
             premises.append(original_spans[idx].text)
@@ -254,6 +260,30 @@ class ContradictionVerifier:
             True,
             "passed",
             {"rule": "deterministic_numeric_scale_contradiction"},
+        )
+
+    def _deterministic_entity_contradiction(
+        self,
+        premise: str,
+        hypothesis: str,
+        plan: RewritePlan,
+    ) -> VerifierResult | None:
+        if plan.family != "entity_replacement":
+            return None
+        target_span = plan.target_span.strip()
+        replacement = plan.replacement.strip()
+        if not target_span or not replacement:
+            return None
+        if replacement not in hypothesis and not span_occurs_as_term(hypothesis, replacement):
+            return None
+        if target_span in hypothesis or span_occurs_as_term(hypothesis, target_span):
+            return None
+        return VerifierResult(
+            self.name,
+            1.0,
+            True,
+            "passed",
+            {"rule": "deterministic_entity_contradiction", "target_span": target_span, "replacement": replacement},
         )
 
     def _deterministic_temporal_contradiction(
@@ -366,7 +396,14 @@ class HallucinationVerifier:
         }
         if plan.family == "entity_replacement" and plan.replacement:
             for key in ("entities", "organizations"):
-                new_items[key] = [item for item in new_items[key] if item != plan.replacement]
+                new_items[key] = [
+                    item for item in new_items[key]
+                    if item != plan.replacement
+                    and item not in plan.replacement
+                    and plan.replacement not in item
+                    and item not in plan.target_span
+                    and plan.target_span not in item
+                ]
         flat_new = [item for values in new_items.values() for item in values]
         passed = not flat_new
         score = max(0.0, 1.0 - 0.15 * len(flat_new))
