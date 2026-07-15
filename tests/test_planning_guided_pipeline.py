@@ -9,6 +9,7 @@ from src.generation.exporter import HumanValidationWorkbookBuilder
 from src.generation.metadata import Article, SampleRecord
 from src.generation.models import ModelBundle
 from src.generation.perturbation_planner import build_planner
+from src.generation.prompts import PLANNING_SCHEMA, build_json_repair_prompt, build_planning_prompt
 from src.generation.pipeline import PlanningGuidedRewritePipeline
 from src.generation.rewrite_generator import RewriteGenerator
 from src.generation.utils import extract_json_payload
@@ -263,6 +264,58 @@ def test_llm_planner_parses_structured_json():
     assert plan.target_span == "১০ শতাংশ"
     assert plan.replacement == "৭ শতাংশ"
     assert plan.planner_model == "fake-qwen"
+
+
+def test_llm_planner_normalizes_nonlocal_scope():
+    article = Article(
+        article_id="a1",
+        headline="বাংলাদেশ ব্যাংক সুদের হার বাড়িয়েছে",
+        text="বাংলাদেশ ব্যাংক নীতিগত সুদের হার ১০ শতাংশ বাড়িয়েছে।",
+    )
+    claims = HeuristicClaimExtractor().extract(article)
+    selected = ClaimRanker(ClaimRankingConfig(min_overall_score=0.1, max_risk_score=1.0)).select(article, claims)
+    assert selected is not None
+    model = FakeInstructionModel(
+        """
+        {
+          "family": "numerical_fact",
+          "target_span": "১০ শতাংশ",
+          "replacement": "৭ শতাংশ",
+          "locality": "বাংলাদেশ ব্যাংক নীতিগত সুদের হার ১০ শতাংশ বাড়িয়েছে।",
+          "edit_instruction": "Change only the selected interest-rate number to ৭ শতাংশ.",
+          "expected_change": "The reported interest rate changes from ১০ শতাংশ to ৭ শতাংশ.",
+          "verification_constraints": {"preserve_all_other_sentences": true}
+        }
+        """
+    )
+
+    plan = build_planner({"backend": "llm_json", "allowed_families": ["numerical_fact"]}, model=model).create_plan(selected)
+
+    assert plan.edit_scope == "target_sentence"
+
+
+def test_planning_prompt_is_compact_and_scope_constrained():
+    article = Article(
+        article_id="a1",
+        headline="বাংলাদেশ ব্যাংক সুদের হার বাড়িয়েছে",
+        text="বাংলাদেশ ব্যাংক নীতিগত সুদের হার ১০ শতাংশ বাড়িয়েছে।",
+    )
+    claims = HeuristicClaimExtractor().extract(article)
+    selected = ClaimRanker(ClaimRankingConfig(min_overall_score=0.1, max_risk_score=1.0)).select(article, claims)
+    assert selected is not None
+
+    prompt = build_planning_prompt(selected, ["numerical_fact"])
+
+    assert 'locality must be exactly "target_sentence"' in prompt
+    assert "Do not put the full claim sentence inside locality." in prompt
+    assert "Ranking metadata:" not in prompt
+
+
+def test_planning_repair_prompt_does_not_use_claim_fallback():
+    prompt = build_json_repair_prompt("rewrite planning", PLANNING_SCHEMA, "not json")
+
+    assert '{"claims": []}' not in prompt
+    assert "return {}" in prompt
 
 
 def test_rewrite_generator_splices_only_target_sentence():

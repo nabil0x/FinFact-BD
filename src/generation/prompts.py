@@ -37,9 +37,9 @@ CLAIM_EXTRACTION_SCHEMA = {
 
 PLANNING_SCHEMA = {
     "family": "numerical_fact|policy_reversal|entity_replacement|temporal_shift|causal_inversion",
-    "target_span": "exact span in selected sentence",
-    "replacement": "planned replacement or concise target description",
-    "locality": "sentence",
+    "target_span": "short exact span in selected sentence",
+    "replacement": "short planned replacement",
+    "locality": "target_sentence",
     "edit_instruction": "one-sentence instruction for the rewriter",
     "expected_change": "what factual property changes",
     "verification_constraints": {
@@ -102,6 +102,13 @@ def build_planning_prompt(ranked_claim: RankedClaim, allowed_families: list[str]
         f"Allowed families: {', '.join(allowed_families)}\n"
         "Return valid JSON only. Do not output Markdown, commentary, or analysis.\n"
         "The response must begin with { and end with }.\n\n"
+        "Output constraints:\n"
+        "- Return one compact JSON object under 180 words.\n"
+        "- target_span must be a short exact span from the selected claim sentence.\n"
+        "- replacement must be short, preferably under 12 Bangla words.\n"
+        "- locality must be exactly \"target_sentence\".\n"
+        "- edit_instruction and expected_change must each be one concise sentence.\n"
+        "- Do not put the full claim sentence inside locality.\n\n"
         f"Selected claim sentence index: {claim.sentence_index}\n"
         f"Selected claim sentence: {claim.sentence}\n"
         f"Claim type: {claim.claim_type}\n"
@@ -109,18 +116,25 @@ def build_planning_prompt(ranked_claim: RankedClaim, allowed_families: list[str]
         f"Numbers: {claim.numbers}\n"
         f"Policies: {claim.policies}\n"
         f"Dates: {claim.dates}\n"
-        f"Ranking metadata: {json.dumps(ranked_claim.to_dict(), ensure_ascii=False)}\n\n"
+        "Scores: "
+        f"importance={ranked_claim.importance_score:.4f}, "
+        f"editability={ranked_claim.editability_score:.4f}, "
+        f"verification={ranked_claim.verification_score:.4f}, "
+        f"locality={ranked_claim.locality_score:.4f}, "
+        f"risk={ranked_claim.risk_score:.4f}, "
+        f"overall={ranked_claim.overall_score:.4f}\n\n"
         f"JSON schema:\n{json.dumps(PLANNING_SCHEMA, ensure_ascii=False, indent=2)}\n\n"
         "Valid JSON:"
     )
 
 
 def build_json_repair_prompt(task: str, schema: dict[str, object], raw_output: str) -> str:
+    fallback = '{"claims": []}' if task == "claim extraction" else "{}"
     return (
         f"The previous {task} response was not valid JSON.\n"
         "Convert it into valid JSON matching the schema below.\n"
         "Return JSON only. Do not output Markdown, commentary, analysis, or code fences.\n"
-        "If the previous response does not contain usable information for claim extraction, return {\"claims\": []}.\n\n"
+        f"If the previous response does not contain usable information, return {fallback}.\n\n"
         f"JSON schema:\n{json.dumps(schema, ensure_ascii=False, indent=2)}\n\n"
         f"Previous response:\n{raw_output[:3000]}\n\n"
         "Valid JSON:"

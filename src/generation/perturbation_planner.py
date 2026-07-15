@@ -130,7 +130,7 @@ class LLMPerturbationPlanner:
             family=family,
             target_claim=ranked_claim.claim,
             edit_instruction=str(payload.get("edit_instruction") or "").strip(),
-            edit_scope=str(payload.get("locality") or payload.get("edit_scope") or "sentence").strip(),
+            edit_scope=self._edit_scope(payload),
             expected_change=str(payload.get("expected_change") or "").strip(),
             verification_constraints=constraints,
             target_span=str(payload.get("target_span") or "").strip(),
@@ -141,6 +141,13 @@ class LLMPerturbationPlanner:
             raise ValueError("Planner JSON must include edit_instruction, expected_change, and target_span")
         logger.info("LLM planned %s rewrite for sentence %d", family, ranked_claim.claim.sentence_index)
         return plan
+
+    def _edit_scope(self, payload: Dict[str, Any]) -> str:
+        scope = str(payload.get("locality") or payload.get("edit_scope") or "target_sentence").strip()
+        if scope in {"target_sentence", "sentence"}:
+            return "target_sentence"
+        logger.warning("Planner produced non-local edit scope %r; normalizing to target_sentence", scope[:160])
+        return "target_sentence"
 
     def _extract_payload(self, raw: str) -> object:
         try:
