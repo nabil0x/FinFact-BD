@@ -57,6 +57,9 @@ class PerturbationPlanner:
     allowed_families: List[str]
 
     def create_plan(self, ranked_claim: RankedClaim) -> RewritePlan:
+        return self._build_plan(ranked_claim)
+
+    def _build_plan(self, ranked_claim: RankedClaim) -> RewritePlan:
         claim = ranked_claim.claim
         family = TYPE_TO_FAMILY.get(claim.claim_type)
         if family not in self.allowed_families:
@@ -87,7 +90,6 @@ class PerturbationPlanner:
         return plan
 
     def _instruction(self, family: str, ranked_claim: RankedClaim) -> tuple[str, str]:
-        claim = ranked_claim.claim
         if family == "numerical_fact":
             return (
                 "Rewrite the selected claim so one financial number changes by a meaningful economic scale.",
@@ -164,16 +166,87 @@ class LLMPerturbationPlanner:
                     payload,
                     str(exc),
                 )
+                # Use increasing temperature for repair attempts so the LLM
+                # actually produces diverse output rather than repeating the
+                # same hallucination (0.0 would yield identical output).
+                repair_temperature = min(0.1 * (attempt + 1), 0.5)
                 repaired = self.model.generate_text(
                     repair_prompt,
-                    0.0,
+                    repair_temperature,
                     self.seed + 2000 + attempt,
                     self.max_new_tokens,
                 )
                 payload = self._extract_payload(repaired)
                 if not isinstance(payload, dict):
                     raise ValueError("Planner repair JSON must be an object")
+
+        # All repair attempts exhausted; try fallback families on the
+        # same claim.  The LLM's chosen family may have failed due to a
+        # type-specific validation (e.g. same-role entity, temporal
+        # anchor absent, etc.), and a different family may succeed.
+        fallback_order = self._fallback_families(
+            TYPE_TO_FAMILY.get(ranked_claim.claim.claim_type, ""),
+            ranked_claim.claim,
+        )
+        if fallback_order:
+            last_error_from_primary = last_error
+            for fb_family in fallback_order[1:]:
+                fb_prompt = build_planning_prompt(
+                    ranked_claim,
+                    [fb_family],
+                )
+                fb_raw = self.model.generate_text(
+                    fb_prompt,
+                    self.temperature,
+                    self.seed + 5000 + hash(fb_family) % 9999,
+                    self.max_new_tokens,
+                )
+                fb_payload = self._extract_payload(fb_raw)
+                if not isinstance(fb_payload, dict):
+                    continue
+                try:
+                    fb_plan = self._plan_from_payload(fb_payload, ranked_claim)
+                    validate_rewrite_plan(fb_plan)
+                    fb_plan = self._review_valid_plan(fb_plan, ranked_claim)
+                    primary_type = TYPE_TO_FAMILY.get(ranked_claim.claim.claim_type, "unknown")
+                    logger.info(
+                        "LLM fallback planned %s rewrite for sentence %d (was %s)",
+                        fb_family,
+                        ranked_claim.claim.sentence_index,
+                        primary_type,
+                    )
+                    return fb_plan
+                except ValueError as fb_exc:
+                    last_error = fb_exc
+                    logger.info(
+                        "Fallback family %s also failed for claim %s: %s",
+                        fb_family,
+                        ranked_claim.claim.sentence_index,
+                        fb_exc,
+                    )
+            # Restore the original primary-family error so that the
+            # pipeline's candidate retry sees the real reason.
+            last_error = last_error_from_primary
+
         raise last_error or ValueError("Planner did not produce a valid plan")
+
+    def _fallback_families(self, primary_family: str, claim: object) -> List[str]:
+        """Return [primary, *fallback] families to try for the same claim.
+
+        When the LLM-chosen family fails validation (e.g. same-role entity),
+        fallback families that might succeed on the same claim are appended.
+        """
+        order = [primary_family]
+        if primary_family == "entity_replacement":
+            if hasattr(claim, "numbers") and claim.numbers:
+                if "numerical_fact" in self.allowed_families:
+                    order.append("numerical_fact")
+            if hasattr(claim, "dates") or (
+                hasattr(claim, "sentence") and any(c.isdigit() for c in claim.sentence)
+            ):
+                if "temporal_shift" in self.allowed_families:
+                    order.append("temporal_shift")
+        return order
 
     def _review_valid_plan(self, plan: RewritePlan, ranked_claim: RankedClaim) -> RewritePlan:
         reviewed = plan
