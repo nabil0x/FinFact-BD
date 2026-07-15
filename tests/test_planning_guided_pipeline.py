@@ -294,6 +294,50 @@ def test_llm_planner_normalizes_nonlocal_scope():
     assert plan.edit_scope == "target_sentence"
 
 
+def test_llm_planner_repairs_validation_failed_plan():
+    article = Article(
+        article_id="a1",
+        headline="বাংলাদেশ ব্যাংক সুদের হার বাড়িয়েছে",
+        text="বাংলাদেশ ব্যাংক নীতিগত সুদের হার ১০ শতাংশ বাড়িয়েছে।",
+    )
+    claims = HeuristicClaimExtractor().extract(article)
+    selected = ClaimRanker(ClaimRankingConfig(min_overall_score=0.1, max_risk_score=1.0)).select(article, claims)
+    assert selected is not None
+    model = FakeSequenceInstructionModel(
+        [
+            """
+            {
+              "family": "numerical_fact",
+              "target_span": "১০ শতাংশ",
+              "replacement": "১১ শতাংশ",
+              "locality": "target_sentence",
+              "edit_instruction": "Change only the selected interest-rate number to ১১ শতাংশ.",
+              "expected_change": "The reported interest rate changes weakly.",
+              "verification_constraints": {"preserve_all_other_sentences": true}
+            }
+            """,
+            """
+            {
+              "family": "numerical_fact",
+              "target_span": "১০ শতাংশ",
+              "replacement": "100 শতাংশ",
+              "locality": "target_sentence",
+              "edit_instruction": "Change only the selected interest-rate number to 100 শতাংশ.",
+              "expected_change": "The reported interest rate changes by a significant scale.",
+              "verification_constraints": {"preserve_all_other_sentences": true}
+            }
+            """,
+        ]
+    )
+
+    plan = build_planner(
+        {"backend": "llm_json", "allowed_families": ["numerical_fact"], "plan_repair_attempts": 1},
+        model=model,
+    ).create_plan(selected)
+
+    assert plan.replacement == "100 শতাংশ"
+
+
 def test_planning_prompt_is_compact_and_scope_constrained():
     article = Article(
         article_id="a1",

@@ -8,6 +8,7 @@ from src.generation.utils import (
     entities_are_same_role,
     extract_dates,
     extract_entities,
+    numeric_unit_mismatch_reason,
     numeric_values,
     scaled_numeric_values,
     significant_numeric_scale_change,
@@ -52,6 +53,11 @@ def _numeric_change(original: str, rewritten: str, plan: RewritePlan) -> Tuple[f
         return 0.0, False, "numeric_values_missing", details
     if replacement_values and not any(value in rewritten_values for value in replacement_values):
         return 0.25, False, "planned_numeric_replacement_missing", details
+    if plan.replacement:
+        unit_reason = numeric_unit_mismatch_reason(plan.target_span, plan.replacement)
+        if unit_reason:
+            details["unit_mismatch"] = unit_reason
+            return 0.25, False, unit_reason, details
     if original_values == rewritten_values:
         return 0.0, False, "numeric_value_unchanged", details
     if plan.replacement and not significant_numeric_scale_change(plan.target_span, plan.replacement):

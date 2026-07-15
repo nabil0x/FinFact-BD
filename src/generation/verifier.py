@@ -15,7 +15,10 @@ from src.generation.utils import (
     extract_dates,
     extract_entities,
     extract_numbers,
+    numeric_unit_mismatch_reason,
     sentence_spans,
+    significant_numeric_scale_change,
+    span_occurs_as_term,
     target_sentence,
 )
 from src.generation.verification_rules import intended_change_verdict
@@ -165,6 +168,7 @@ class ContradictionVerifier:
 
     def verify_batch(self, articles: List[Article], rewritten_articles: List[str], plans: List[RewritePlan]) -> List[VerifierResult]:
         results: List[VerifierResult | None] = [None] * len(articles)
+        deterministic_results: List[VerifierResult | None] = [None] * len(articles)
         premises: List[str] = []
         hypotheses: List[str] = []
         valid_indices: List[int] = []
@@ -175,11 +179,29 @@ class ContradictionVerifier:
             if idx >= len(original_spans) or idx >= len(rewritten_spans):
                 results[batch_idx] = VerifierResult(self.name, 0.0, False, "target_sentence_missing")
                 continue
+            deterministic = self._deterministic_numeric_contradiction(
+                original_spans[idx].text,
+                rewritten_spans[idx].text,
+                plan,
+            )
+            deterministic_results[batch_idx] = deterministic
             valid_indices.append(batch_idx)
             premises.append(original_spans[idx].text)
             hypotheses.append(rewritten_spans[idx].text)
         scores = self._contradiction_scores(premises, hypotheses) if premises else []
         for batch_idx, score in zip(valid_indices, scores):
+            deterministic = deterministic_results[batch_idx]
+            if deterministic is not None:
+                details = dict(deterministic.details)
+                details["nli_score"] = round(score, 4)
+                results[batch_idx] = VerifierResult(
+                    self.name,
+                    deterministic.score,
+                    deterministic.passed,
+                    deterministic.reason,
+                    details,
+                )
+                continue
             passed = score >= self.min_score
             results[batch_idx] = VerifierResult(
                 self.name,
@@ -194,6 +216,34 @@ class ContradictionVerifier:
         if callable(batch_fn):
             return list(batch_fn(premises, hypotheses))
         return [self.nli.contradiction_score(premise, hypothesis) for premise, hypothesis in zip(premises, hypotheses)]
+
+    def _deterministic_numeric_contradiction(
+        self,
+        premise: str,
+        hypothesis: str,
+        plan: RewritePlan,
+    ) -> VerifierResult | None:
+        if plan.family != "numerical_fact":
+            return None
+        target_span = plan.target_span.strip()
+        replacement = plan.replacement.strip()
+        if not target_span or not replacement:
+            return None
+        if numeric_unit_mismatch_reason(target_span, replacement):
+            return None
+        if not significant_numeric_scale_change(target_span, replacement):
+            return None
+        if replacement not in hypothesis and not span_occurs_as_term(hypothesis, replacement):
+            return None
+        if target_span in hypothesis:
+            return None
+        return VerifierResult(
+            self.name,
+            1.0,
+            True,
+            "passed",
+            {"rule": "deterministic_numeric_scale_contradiction"},
+        )
 
 
 @dataclass(frozen=True)

@@ -21,6 +21,11 @@ SCALE_NUMERIC_RE = re.compile(
     rf"({DIGIT_PATTERN}\s+দশমিক\s+{DIGIT_PATTERN}|{DECIMAL_PATTERN})"
     r"\s*(কোটি|লাখ|হাজার|শ|শত|শতাংশ|ভাগ|%|ডলার|টাকা|টাকার|টি|জন)?"
 )
+MONEY_UNIT_RE = re.compile(r"(?:টাকা|টাকার|ডলার|মার্কিন ডলার)")
+NUMERIC_SCALE_WORD_RE = re.compile(r"(?:কোটি|লাখ|হাজার)")
+HIGH_MONEY_SCALE_RE = re.compile(r"(?:কোটি|লাখ)")
+PERCENT_UNIT_RE = re.compile(r"(?:শতাংশ|ভাগ|%)")
+COUNT_UNIT_RE = re.compile(r"(?:টি|টির|টা|টার|জন|দেশ|কারখানা|হাসপাতাল|পয়েন্ট|প্যাকেট)")
 DATE_RE = re.compile(
     r"(?:19\d{2}|20\d{2}|[০-৯]{4}|"
     r"জানুয়ারি|ফেব্রুয়ারি|মার্চ|এপ্রিল|মে|জুন|জুলাই|আগস্ট|"
@@ -354,6 +359,36 @@ def significant_numeric_scale_change(original: str, rewritten: str, min_factor: 
     return ratio > min_factor or ratio < (1.0 / min_factor)
 
 
+def numeric_unit_mismatch_reason(target: str, replacement: str) -> str | None:
+    target_profile = _numeric_unit_profile(target)
+    replacement_profile = _numeric_unit_profile(replacement)
+    if not target_profile["has_numeric"] or not replacement_profile["has_numeric"]:
+        return None
+    if target_profile["count"] and not target_profile["money"] and replacement_profile["percent"]:
+        return None
+    if target_profile["percent"] != replacement_profile["percent"]:
+        return "numeric_unit_mismatch_percent"
+    if target_profile["money"] != replacement_profile["money"]:
+        if target_profile["money"] or replacement_profile["money"]:
+            return "numeric_unit_mismatch_money"
+    return None
+
+
+def _numeric_unit_profile(text: str) -> Dict[str, bool]:
+    has_numeric = bool(numeric_values(text))
+    money = bool(MONEY_UNIT_RE.search(text))
+    scale = bool(NUMERIC_SCALE_WORD_RE.search(text))
+    return {
+        "has_numeric": has_numeric,
+        "money": money,
+        "percent": bool(PERCENT_UNIT_RE.search(text)),
+        "count": bool(COUNT_UNIT_RE.search(text)) and not money,
+        "scale": scale,
+        "high_money_scale": bool(HIGH_MONEY_SCALE_RE.search(text)),
+        "bare_money": money and not scale,
+    }
+
+
 def numeric_values_equivalent(left: str, right: str) -> bool:
     left_values = scaled_numeric_values(left)
     right_values = scaled_numeric_values(right)
@@ -494,12 +529,14 @@ def replace_all_exact(text: str, target: str, replacement: str) -> str:
 
 def artifact_reasons(text: str) -> List[str]:
     reasons: List[str] = []
-    suspicious_fragments = ("প্রব্যঙ্গ", "নির্নয়ন", "ন঵", "অনুষ্", "কনসা")
+    suspicious_fragments = ("প্রব্যঙ্গ", "নির্নয়ন", "ন঵", "অনুষ্")
     if "\ufffd" in text or "�" in text:
         reasons.append("replacement_character")
     if re.search(r"[\u0980-\u09FF]{1,2}্(?:\s|$)", text):
         reasons.append("dangling_halant_fragment")
     if any(fragment in text for fragment in suspicious_fragments):
+        reasons.append("suspicious_bangla_fragment")
+    if re.search(r"(?<![\u0980-\u09FF])কনসা(?![\u0980-\u09FF])", text):
         reasons.append("suspicious_bangla_fragment")
     if re.search(r"([\u0980-\u09FF]{3,}(?:\s+[\u0980-\u09FF]{3,}){0,2})\s+\1", text):
         reasons.append("repeated_bangla_fragment")

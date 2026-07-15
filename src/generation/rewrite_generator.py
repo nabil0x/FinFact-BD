@@ -82,7 +82,7 @@ class RewriteGenerator:
         seed: int,
         attempt: int,
     ) -> GeneratedRewrite | None:
-        if plan.family not in {"numerical_fact", "temporal_shift", "entity_replacement"}:
+        if plan.family not in {"numerical_fact", "temporal_shift", "entity_replacement", "policy_reversal"}:
             return None
         target_span = plan.target_span.strip()
         replacement = plan.replacement.strip()

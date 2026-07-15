@@ -6,12 +6,18 @@ from typing import Any, Dict, List, Protocol
 
 from src.generation.metadata import RankedClaim, RewritePlan
 from src.generation.models import InstructionModel
-from src.generation.prompts import PLANNING_SCHEMA, build_json_repair_prompt, build_planning_prompt
+from src.generation.prompts import (
+    PLANNING_SCHEMA,
+    build_json_repair_prompt,
+    build_planning_prompt,
+    build_planning_validation_repair_prompt,
+)
 from src.generation.utils import (
     CAUSAL_TERMS,
     entities_are_same_role,
     extract_json_payload,
     is_temporal_span,
+    numeric_unit_mismatch_reason,
     numeric_values,
     numeric_values_equivalent,
     significant_numeric_scale_change,
@@ -127,6 +133,7 @@ class LLMPerturbationPlanner:
     temperature: float = 0.0
     seed: int = 42
     json_repair_attempts: int = 1
+    plan_repair_attempts: int = 1
 
     def create_plan(self, ranked_claim: RankedClaim) -> RewritePlan:
         prompt = build_planning_prompt(ranked_claim, self.allowed_families)
@@ -134,6 +141,36 @@ class LLMPerturbationPlanner:
         payload = self._extract_payload(raw)
         if not isinstance(payload, dict):
             raise ValueError("Planner JSON must be an object")
+        last_error: ValueError | None = None
+        for attempt in range(0, self.plan_repair_attempts + 1):
+            try:
+                plan = self._plan_from_payload(payload, ranked_claim)
+                validate_rewrite_plan(plan)
+                logger.info("LLM planned %s rewrite for sentence %d", plan.family, ranked_claim.claim.sentence_index)
+                return plan
+            except ValueError as exc:
+                last_error = exc
+                if attempt >= self.plan_repair_attempts:
+                    break
+                logger.warning("Planner plan failed validation; requesting repair: %s", exc)
+                repair_prompt = build_planning_validation_repair_prompt(
+                    ranked_claim,
+                    self.allowed_families,
+                    payload,
+                    str(exc),
+                )
+                repaired = self.model.generate_text(
+                    repair_prompt,
+                    0.0,
+                    self.seed + 2000 + attempt,
+                    self.max_new_tokens,
+                )
+                payload = self._extract_payload(repaired)
+                if not isinstance(payload, dict):
+                    raise ValueError("Planner repair JSON must be an object")
+        raise last_error or ValueError("Planner did not produce a valid plan")
+
+    def _plan_from_payload(self, payload: Dict[str, Any], ranked_claim: RankedClaim) -> RewritePlan:
         family = self._family(payload)
         constraints = self._constraints(payload, ranked_claim)
         plan = RewritePlan(
@@ -149,8 +186,6 @@ class LLMPerturbationPlanner:
         )
         if not plan.edit_instruction or not plan.expected_change or not plan.target_span:
             raise ValueError("Planner JSON must include edit_instruction, expected_change, and target_span")
-        validate_rewrite_plan(plan)
-        logger.info("LLM planned %s rewrite for sentence %d", family, ranked_claim.claim.sentence_index)
         return plan
 
     def _edit_scope(self, payload: Dict[str, Any]) -> str:
@@ -235,6 +270,7 @@ def build_planner(
             temperature=float(cfg.get("temperature", 0.0)),
             seed=int(cfg.get("seed", 42)),
             json_repair_attempts=int(cfg.get("json_repair_attempts", 1)),
+            plan_repair_attempts=int(cfg.get("plan_repair_attempts", 1)),
         )
     if backend != "heuristic":
         raise ValueError(f"Unsupported planner backend: {backend}")
@@ -254,6 +290,10 @@ def validate_rewrite_plan(plan: RewritePlan) -> None:
             raise ValueError("Numerical plan target_span appears temporal; use temporal_shift")
         if plan.replacement and not numeric_values(plan.replacement):
             raise ValueError("Numerical plan replacement must contain a numeric value")
+        if plan.replacement:
+            unit_reason = numeric_unit_mismatch_reason(plan.target_span, plan.replacement)
+            if unit_reason:
+                raise ValueError(f"Numerical plan replacement has incompatible units: {unit_reason}")
         if plan.replacement and numeric_values_equivalent(plan.target_span, plan.replacement):
             raise ValueError("Numerical plan replacement is value-equivalent to target_span")
         if plan.replacement and not significant_numeric_scale_change(plan.target_span, plan.replacement):

@@ -202,3 +202,26 @@ def build_json_repair_prompt(task: str, schema: dict[str, object], raw_output: s
         f"Previous response:\n{raw_output[:3000]}\n\n"
         "Valid JSON:"
     )
+
+
+def build_planning_validation_repair_prompt(
+    ranked_claim: RankedClaim,
+    allowed_families: list[str],
+    invalid_payload: dict[str, object],
+    validation_error: str,
+) -> str:
+    base_prompt = build_planning_prompt(ranked_claim, allowed_families)
+    return (
+        f"{base_prompt}\n\n"
+        "The previous JSON plan was syntactically valid but failed validation.\n"
+        f"Validation error: {validation_error}\n"
+        "Previous JSON plan:\n"
+        f"{json.dumps(invalid_payload, ensure_ascii=False, indent=2)}\n\n"
+        "Repair requirements:\n"
+        "- Return a new valid JSON plan only.\n"
+        "- Fix the validation error directly.\n"
+        "- Keep target_span as an exact short span from the selected claim sentence.\n"
+        "- If numerical, choose a significant high-contrast contradiction; cross-unit changes are allowed when readable.\n"
+        "- If entity replacement, do not use a same-role peer entity.\n\n"
+        "Valid repaired JSON:"
+    )

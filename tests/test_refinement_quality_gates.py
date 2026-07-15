@@ -5,10 +5,10 @@ import pytest
 from src.generation.claim_extraction import HeuristicClaimExtractor
 from src.generation.claim_selection import ClaimRanker, ClaimRankingConfig
 from src.generation.metadata import Article, Claim, RankedClaim, RewritePlan
-from src.generation.perturbation_planner import build_planner
+from src.generation.perturbation_planner import build_planner, validate_rewrite_plan
 from src.generation.rewrite_generator import RewriteGenerator
-from src.generation.utils import ENTITY_TERMS, entities_are_same_role, extract_entities
-from src.generation.verifier import CompositeVerifier, IntendedChangeVerifier, TextQualityArtifactVerifier
+from src.generation.utils import ENTITY_TERMS, artifact_reasons, entities_are_same_role, extract_entities
+from src.generation.verifier import CompositeVerifier, ContradictionVerifier, IntendedChangeVerifier, TextQualityArtifactVerifier
 
 
 class StaticGenerator:
@@ -28,6 +28,13 @@ class ExplodingGenerator:
 
     def generate_batch(self, prompts, temperatures, seeds, max_new_tokens):
         raise AssertionError("controlled rewrite should not call the generation model")
+
+
+class LowContradictionNLI:
+    model_name = "low-nli"
+
+    def contradiction_score(self, premise, hypothesis):
+        return 0.01
 
 
 def numerical_plan(target_span: str = "১শ’টির বেশি", replacement: str = "১০০টির বেশি") -> RewritePlan:
@@ -156,6 +163,130 @@ def test_controlled_numeric_rewrite_uses_exact_scale_replacement_without_model_c
 
     assert rewritten.rewritten_article == "সিটি ব্যাংক ডিএমপিকে ৫ কোটি টাকার অনুদান প্রদান করেছে। বাজার স্থিতিশীল আছে।"
     assert report.passed is True
+
+
+def test_controlled_policy_rewrite_uses_exact_replacement_without_model_call():
+    article = Article(
+        article_id="a1",
+        headline="সুদের বাধা",
+        text="অবশেষে বহুল প্রত্যাশিত ব্যাংক ঋণের সুদের হার সিঙ্গেল ডিজিট ও সরল সুদ চালুর বাধা কাটল।",
+    )
+    claim = Claim(
+        sentence_index=0,
+        sentence=article.text,
+        claim_type="policy",
+        entities=["ব্যাংক"],
+        numbers=[],
+        policies=["বাধা কাটল"],
+        dates=[],
+        confidence=0.9,
+    )
+    plan = RewritePlan(
+        family="policy_reversal",
+        target_claim=claim,
+        edit_instruction="Reverse the policy barrier direction.",
+        edit_scope="target_sentence",
+        expected_change="The implementation barrier increases instead of being removed.",
+        verification_constraints={},
+        target_span="সরল সুদ চালুর বাধা কাটল",
+        replacement="সরল সুদ চালুর বাধা আরও বেড়েছে",
+    )
+
+    rewritten = RewriteGenerator(ExplodingGenerator()).rewrite(article, plan, temperature=0.4, seed=1, attempt=1)
+
+    assert rewritten.rewritten_article == (
+        "অবশেষে বহুল প্রত্যাশিত ব্যাংক ঋণের সুদের হার সিঙ্গেল ডিজিট ও "
+        "সরল সুদ চালুর বাধা আরও বেড়েছে।"
+    )
+
+
+def test_artifact_detector_allows_valid_consultancy_word():
+    assert "suspicious_bangla_fragment" not in artifact_reasons("ফ্রি ভিসা ও মেডিকেল কনসালটেন্সি সুবিধা পাবেন।")
+    assert "suspicious_bangla_fragment" in artifact_reasons("ফ্রি ভিসা ও মেডিকেল কনসা।")
+
+
+def test_numerical_plan_allows_strong_cross_unit_replacements():
+    claim = Claim(
+        sentence_index=0,
+        sentence="উদ্বোধন উপলক্ষে মোড়কজাত ৫৬ টাকার চিনির প্যাকেট সরবরাহ করা হয়।",
+        claim_type="numerical",
+        entities=[],
+        numbers=["৫৬"],
+        policies=[],
+        dates=[],
+        confidence=0.9,
+    )
+    bad_money_plan = RewritePlan(
+        family="numerical_fact",
+        target_claim=claim,
+        edit_instruction="Inflate the price.",
+        edit_scope="target_sentence",
+        expected_change="The packet price changes.",
+        verification_constraints={},
+        target_span="৫৬ টাকার",
+        replacement="৫ কোটি টাকার",
+    )
+    money_to_percent_plan = RewritePlan(
+        family="numerical_fact",
+        target_claim=claim,
+        edit_instruction="Change the price unit incorrectly.",
+        edit_scope="target_sentence",
+        expected_change="The packet price changes.",
+        verification_constraints={},
+        target_span="৫৬ টাকার",
+        replacement="১০০ শতাংশ",
+    )
+    good_money_plan = RewritePlan(
+        family="numerical_fact",
+        target_claim=claim,
+        edit_instruction="Inflate the price.",
+        edit_scope="target_sentence",
+        expected_change="The packet price changes.",
+        verification_constraints={},
+        target_span="৫৬ টাকার",
+        replacement="৫৬০ টাকার",
+    )
+    count_claim = Claim(
+        sentence_index=0,
+        sentence="বিশ্বের ১শ’টির বেশি দেশে ব্যবসা পরিচালনাকারী কোম্পানি।",
+        claim_type="numerical",
+        entities=[],
+        numbers=["১"],
+        policies=[],
+        dates=[],
+        confidence=0.9,
+    )
+    bad_count_plan = RewritePlan(
+        family="numerical_fact",
+        target_claim=count_claim,
+        edit_instruction="Change the country count.",
+        edit_scope="target_sentence",
+        expected_change="The country count changes.",
+        verification_constraints={},
+        target_span="১শ’টির বেশি",
+        replacement="১০০ শতাংশ",
+    )
+
+    validate_rewrite_plan(bad_money_plan)
+    validate_rewrite_plan(bad_count_plan)
+    validate_rewrite_plan(good_money_plan)
+    with pytest.raises(ValueError, match="incompatible units"):
+        validate_rewrite_plan(money_to_percent_plan)
+
+
+def test_numeric_contradiction_verifier_accepts_strong_scale_rule_when_nli_is_low():
+    article = Article(
+        article_id="a1",
+        headline="মাহিন্দ্রা ব্যবসা করে",
+        text="বিশ্বের ১শ’টির বেশি দেশে ব্যবসা পরিচালনাকারী প্রায় ২০ বিলিয়ন ডলারের কোম্পানি মাহিন্দ্রা।",
+    )
+    plan = numerical_plan(target_span="১শ’টির বেশি", replacement="১০০ শতাংশ")
+    rewritten = "বিশ্বের ১০০ শতাংশ দেশে ব্যবসা পরিচালনাকারী প্রায় ২০ বিলিয়ন ডলারের কোম্পানি মাহিন্দ্রা।"
+
+    result = ContradictionVerifier(LowContradictionNLI()).verify(article, rewritten, plan)
+
+    assert result.passed is True
+    assert result.details["rule"] == "deterministic_numeric_scale_contradiction"
 
 
 def test_target_artifact_verifier_ignores_unchanged_non_target_artifacts():
