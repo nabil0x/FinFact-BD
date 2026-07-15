@@ -6,7 +6,7 @@ from src.generation.metadata import Article, RankedClaim, RewritePlan
 from src.generation.utils import context_window
 
 
-PROMPT_VERSION = "planning-guided-v5-rulebook"
+PROMPT_VERSION = "planning-guided-v6-plan-review"
 
 SYSTEM_INSTRUCTION = (
     "You are one component in a constrained Bangla financial misinformation "
@@ -102,6 +102,35 @@ PLANNING_SCHEMA = {
     },
 }
 
+PLAN_REVIEW_SCHEMA = {
+    "decision": "pass|repair",
+    "failure_reasons": ["short_machine_readable_reason"],
+    "review_notes": "one short reviewer note",
+    "repaired_plan": "null if decision=pass; complete planning JSON object if decision=repair",
+}
+
+
+def _compact_plan_payload(plan: RewritePlan) -> dict[str, object]:
+    return {
+        "family": plan.family,
+        "target_span": plan.target_span,
+        "replacement": plan.replacement,
+        "locality": plan.edit_scope,
+        "edit_instruction": plan.edit_instruction,
+        "expected_change": plan.expected_change,
+        "verification_constraints": {
+            key: value
+            for key, value in plan.verification_constraints.items()
+            if key
+            in {
+                "preserve_all_other_sentences",
+                "forbid_new_entities_outside_target",
+                "forbid_new_numbers_outside_target",
+                "forbid_new_dates_outside_target",
+            }
+        },
+    }
+
 
 def build_rewrite_prompt(article: Article, plan: RewritePlan, attempt: int) -> str:
     variant = VARIANT_INSTRUCTIONS[(attempt - 1) % len(VARIANT_INSTRUCTIONS)]
@@ -188,6 +217,44 @@ def build_planning_prompt(ranked_claim: RankedClaim, allowed_families: list[str]
         f"overall={ranked_claim.overall_score:.4f}\n\n"
         f"JSON schema:\n{json.dumps(PLANNING_SCHEMA, ensure_ascii=False, indent=2)}\n\n"
         "Valid JSON:"
+    )
+
+
+def build_plan_review_prompt(ranked_claim: RankedClaim, plan: RewritePlan, allowed_families: list[str]) -> str:
+    claim = ranked_claim.claim
+    rule_text = "\n".join(f"- {family}: {FAMILY_RULES[family]}" for family in allowed_families if family in FAMILY_RULES)
+    return (
+        "Review one structured Bangla financial misinformation rewrite plan.\n"
+        "Do not rewrite the article. Decide whether the plan is ready, or repair it into a stronger plan.\n"
+        "Return valid JSON only. Do not output Markdown, commentary, or analysis.\n"
+        "The response must begin with { and end with }.\n\n"
+        "Decision rules:\n"
+        "- Use decision=\"pass\" only if the plan is specific, grammatical, local, and strongly contradictory.\n"
+        "- Use decision=\"repair\" if the plan is valid JSON but weak, vague, same-role, same-meaning, or likely to produce awkward Bangla.\n"
+        "- If repairing, repaired_plan must be a complete planning JSON object using the same schema as the original planner.\n"
+        "- Keep target_span as a short exact span from the selected claim sentence.\n"
+        "- Keep replacement short and directly usable for exact phrase replacement.\n"
+        "- Do not choose a family outside the allowed families.\n\n"
+        "Family review checklist:\n"
+        "- numerical_fact: accept high-contrast scale contradictions. Allow readable count->percentage and price->crore changes. Reject weak/value-equivalent changes and incoherent money->percentage changes.\n"
+        "- entity_replacement: replacement must be a different-role or wrong-belonging actor, not a same-role peer.\n"
+        "- temporal_shift: target/replacement must be time anchors, not financial amounts.\n"
+        "- policy_reversal: replacement must be a clear opposite direction, not vague wording like পুনর্বিবেচনা or পরিবর্তন.\n"
+        "- causal_inversion: preserve the cause when possible and replace the effect with an opposite economic outcome; do not merely swap clause order.\n\n"
+        "Allowed family rules:\n"
+        f"{rule_text}\n\n"
+        f"Selected claim sentence index: {claim.sentence_index}\n"
+        f"Selected claim sentence: {claim.sentence}\n"
+        f"Claim type: {claim.claim_type}\n"
+        f"Entities: {claim.entities}\n"
+        f"Numbers: {claim.numbers}\n"
+        f"Policies: {claim.policies}\n"
+        f"Dates: {claim.dates}\n\n"
+        "Current plan JSON:\n"
+        f"{json.dumps(_compact_plan_payload(plan), ensure_ascii=False, indent=2)}\n\n"
+        f"Review JSON schema:\n{json.dumps(PLAN_REVIEW_SCHEMA, ensure_ascii=False, indent=2)}\n\n"
+        f"Planning JSON schema for repaired_plan:\n{json.dumps(PLANNING_SCHEMA, ensure_ascii=False, indent=2)}\n\n"
+        "Valid review JSON:"
     )
 
 

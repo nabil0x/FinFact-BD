@@ -33,6 +33,8 @@ planner:
   temperature: 0.0
   seed: 43
   json_repair_attempts: 1
+  plan_repair_attempts: 1
+  plan_review_attempts: 1
 
 generation:
   max_new_tokens: 192

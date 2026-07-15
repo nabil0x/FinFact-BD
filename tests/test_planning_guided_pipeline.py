@@ -6,10 +6,16 @@ from pathlib import Path
 from src.generation.claim_extraction import HeuristicClaimExtractor, build_claim_extractor
 from src.generation.claim_selection import ClaimRanker, ClaimRankingConfig
 from src.generation.exporter import HumanValidationWorkbookBuilder
-from src.generation.metadata import Article, SampleRecord
+from src.generation.metadata import Article, Claim, RankedClaim, SampleRecord
 from src.generation.models import ModelBundle
 from src.generation.perturbation_planner import build_planner
-from src.generation.prompts import PLANNING_SCHEMA, build_json_repair_prompt, build_planning_prompt
+from src.generation.prompts import (
+    PLAN_REVIEW_SCHEMA,
+    PLANNING_SCHEMA,
+    build_json_repair_prompt,
+    build_plan_review_prompt,
+    build_planning_prompt,
+)
 from src.generation.pipeline import PlanningGuidedRewritePipeline
 from src.generation.rewrite_generator import RewriteGenerator
 from src.generation.utils import extract_json_payload
@@ -338,6 +344,104 @@ def test_llm_planner_repairs_validation_failed_plan():
     assert plan.replacement == "100 শতাংশ"
 
 
+def test_llm_planner_records_plan_review_pass():
+    article = Article(
+        article_id="a1",
+        headline="বাংলাদেশ ব্যাংক সুদের হার বাড়িয়েছে",
+        text="বাংলাদেশ ব্যাংক নীতিগত সুদের হার ১০ শতাংশ বাড়িয়েছে।",
+    )
+    claims = HeuristicClaimExtractor().extract(article)
+    selected = ClaimRanker(ClaimRankingConfig(min_overall_score=0.1, max_risk_score=1.0)).select(article, claims)
+    assert selected is not None
+    model = FakeSequenceInstructionModel(
+        [
+            """
+            {
+              "family": "numerical_fact",
+              "target_span": "১০ শতাংশ",
+              "replacement": "100 শতাংশ",
+              "locality": "target_sentence",
+              "edit_instruction": "Change only the selected interest-rate number to 100 শতাংশ.",
+              "expected_change": "The reported interest rate changes by a significant scale.",
+              "verification_constraints": {"preserve_all_other_sentences": true}
+            }
+            """,
+            """
+            {
+              "decision": "pass",
+              "failure_reasons": [],
+              "review_notes": "The numeric scale contradiction is strong and local.",
+              "repaired_plan": null
+            }
+            """,
+        ]
+    )
+
+    plan = build_planner(
+        {"backend": "llm_json", "allowed_families": ["numerical_fact"], "plan_review_attempts": 1},
+        model=model,
+    ).create_plan(selected)
+
+    assert plan.replacement == "100 শতাংশ"
+    assert plan.verification_constraints["plan_review"] == {"decision": "pass", "failure_reasons": []}
+
+
+def test_llm_planner_review_repairs_vague_policy_reversal():
+    claim = Claim(
+        sentence_index=0,
+        sentence="বাংলাদেশ ব্যাংক নতুন নীতিমালা অনুমোদন করেছে।",
+        claim_type="policy",
+        entities=["বাংলাদেশ ব্যাংক"],
+        numbers=[],
+        policies=["অনুমোদন করেছে"],
+        dates=[],
+        confidence=0.9,
+    )
+    selected = RankedClaim(claim, 0.9, 0.9, 0.9, 0.9, 0.1, 0.9)
+    model = FakeSequenceInstructionModel(
+        [
+            """
+            {
+              "family": "policy_reversal",
+              "target_span": "অনুমোদন করেছে",
+              "replacement": "পুনর্বিবেচনা করেছে",
+              "locality": "target_sentence",
+              "edit_instruction": "Make the policy direction less certain.",
+              "expected_change": "The policy decision changes vaguely.",
+              "verification_constraints": {"preserve_all_other_sentences": true}
+            }
+            """,
+            """
+            {
+              "decision": "repair",
+              "failure_reasons": ["policy_reversal_vague"],
+              "review_notes": "The replacement is not a clear opposite direction.",
+              "repaired_plan": {
+                "family": "policy_reversal",
+                "target_span": "অনুমোদন করেছে",
+                "replacement": "অনুমোদন দেয়নি",
+                "locality": "target_sentence",
+                "edit_instruction": "Reverse the approval decision directly.",
+                "expected_change": "The policy changes from approval to rejection.",
+                "verification_constraints": {"preserve_all_other_sentences": true}
+              }
+            }
+            """,
+        ]
+    )
+
+    plan = build_planner(
+        {"backend": "llm_json", "allowed_families": ["policy_reversal"], "plan_review_attempts": 1},
+        model=model,
+    ).create_plan(selected)
+
+    assert plan.replacement == "অনুমোদন দেয়নি"
+    assert plan.verification_constraints["plan_review"] == {
+        "decision": "repair",
+        "failure_reasons": ["policy_reversal_vague"],
+    }
+
+
 def test_planning_prompt_is_compact_and_scope_constrained():
     article = Article(
         article_id="a1",
@@ -353,6 +457,29 @@ def test_planning_prompt_is_compact_and_scope_constrained():
     assert 'locality must be exactly "target_sentence"' in prompt
     assert "Do not put the full claim sentence inside locality." in prompt
     assert "Ranking metadata:" not in prompt
+
+
+def test_plan_review_prompt_contains_pass_repair_contract():
+    claim = Claim(
+        sentence_index=0,
+        sentence="বাংলাদেশ ব্যাংক নতুন নীতিমালা অনুমোদন করেছে।",
+        claim_type="policy",
+        entities=["বাংলাদেশ ব্যাংক"],
+        numbers=[],
+        policies=["অনুমোদন করেছে"],
+        dates=[],
+        confidence=0.9,
+    )
+    selected = RankedClaim(claim, 0.9, 0.9, 0.9, 0.9, 0.1, 0.9)
+    plan = build_planner().create_plan(selected)
+
+    prompt = build_plan_review_prompt(selected, plan, ["policy_reversal"])
+
+    assert "decision=\"pass\"" in prompt
+    assert "decision=\"repair\"" in prompt
+    assert "Current plan JSON" in prompt
+    assert "Review JSON schema" in prompt
+    assert PLAN_REVIEW_SCHEMA["decision"] == "pass|repair"
 
 
 def test_planning_repair_prompt_does_not_use_claim_fallback():

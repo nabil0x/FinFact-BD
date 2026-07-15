@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Dict, List, Protocol
 
 from src.generation.metadata import RankedClaim, RewritePlan
 from src.generation.models import InstructionModel
 from src.generation.prompts import (
+    PLAN_REVIEW_SCHEMA,
     PLANNING_SCHEMA,
     build_json_repair_prompt,
+    build_plan_review_prompt,
     build_planning_prompt,
     build_planning_validation_repair_prompt,
 )
@@ -134,6 +136,7 @@ class LLMPerturbationPlanner:
     seed: int = 42
     json_repair_attempts: int = 1
     plan_repair_attempts: int = 1
+    plan_review_attempts: int = 0
 
     def create_plan(self, ranked_claim: RankedClaim) -> RewritePlan:
         prompt = build_planning_prompt(ranked_claim, self.allowed_families)
@@ -146,6 +149,7 @@ class LLMPerturbationPlanner:
             try:
                 plan = self._plan_from_payload(payload, ranked_claim)
                 validate_rewrite_plan(plan)
+                plan = self._review_valid_plan(plan, ranked_claim)
                 logger.info("LLM planned %s rewrite for sentence %d", plan.family, ranked_claim.claim.sentence_index)
                 return plan
             except ValueError as exc:
@@ -169,6 +173,64 @@ class LLMPerturbationPlanner:
                 if not isinstance(payload, dict):
                     raise ValueError("Planner repair JSON must be an object")
         raise last_error or ValueError("Planner did not produce a valid plan")
+
+    def _review_valid_plan(self, plan: RewritePlan, ranked_claim: RankedClaim) -> RewritePlan:
+        reviewed = plan
+        for attempt in range(self.plan_review_attempts):
+            prompt = build_plan_review_prompt(ranked_claim, reviewed, self.allowed_families)
+            raw = self.model.generate_text(
+                prompt,
+                0.0,
+                self.seed + 3000 + attempt,
+                self.max_new_tokens,
+            )
+            try:
+                payload = self._extract_payload(
+                    raw,
+                    schema=PLAN_REVIEW_SCHEMA,
+                    task="plan review",
+                    seed_offset=3000,
+                )
+            except ValueError as exc:
+                logger.warning("Plan reviewer returned invalid JSON; keeping validated plan: %s", exc)
+                return reviewed
+            if not isinstance(payload, dict):
+                logger.warning("Plan reviewer JSON was not an object; keeping validated plan")
+                return reviewed
+            decision = str(payload.get("decision") or "").strip().lower()
+            reasons = self._review_reasons(payload)
+            if decision == "pass":
+                return self._annotate_review(reviewed, "pass", reasons)
+            if decision != "repair":
+                logger.warning("Plan reviewer returned unsupported decision %r; keeping validated plan", decision)
+                return reviewed
+            repaired_payload = payload.get("repaired_plan")
+            if not isinstance(repaired_payload, dict):
+                logger.warning("Plan reviewer requested repair without repaired_plan; keeping validated plan")
+                return reviewed
+            try:
+                repaired = self._plan_from_payload(repaired_payload, ranked_claim)
+                validate_rewrite_plan(repaired)
+            except ValueError as exc:
+                logger.warning("Plan reviewer repair failed validation; keeping validated plan: %s", exc)
+                return reviewed
+            reviewed = self._annotate_review(repaired, "repair", reasons)
+            logger.info("Plan reviewer repaired %s plan reasons=%s", reviewed.family, reasons)
+        return reviewed
+
+    def _review_reasons(self, payload: Dict[str, Any]) -> List[str]:
+        raw_reasons = payload.get("failure_reasons", [])
+        if not isinstance(raw_reasons, list):
+            return [str(raw_reasons)]
+        return [str(reason) for reason in raw_reasons if str(reason).strip()]
+
+    def _annotate_review(self, plan: RewritePlan, decision: str, reasons: List[str]) -> RewritePlan:
+        constraints = dict(plan.verification_constraints)
+        constraints["plan_review"] = {
+            "decision": decision,
+            "failure_reasons": reasons,
+        }
+        return replace(plan, verification_constraints=constraints)
 
     def _plan_from_payload(self, payload: Dict[str, Any], ranked_claim: RankedClaim) -> RewritePlan:
         family = self._family(payload)
@@ -195,17 +257,23 @@ class LLMPerturbationPlanner:
         logger.warning("Planner produced non-local edit scope %r; normalizing to target_sentence", scope[:160])
         return "target_sentence"
 
-    def _extract_payload(self, raw: str) -> object:
+    def _extract_payload(
+        self,
+        raw: str,
+        schema: Dict[str, object] = PLANNING_SCHEMA,
+        task: str = "rewrite planning",
+        seed_offset: int = 1000,
+    ) -> object:
         try:
             return extract_json_payload(raw)
         except ValueError as first_error:
             last_error: Exception = first_error
         for attempt in range(1, self.json_repair_attempts + 1):
-            repair_prompt = build_json_repair_prompt("rewrite planning", PLANNING_SCHEMA, raw)
+            repair_prompt = build_json_repair_prompt(task, schema, raw)
             repaired = self.model.generate_text(
                 repair_prompt,
                 0.0,
-                self.seed + 1000 + attempt,
+                self.seed + seed_offset + attempt,
                 self.max_new_tokens,
             )
             try:
@@ -271,6 +339,7 @@ def build_planner(
             seed=int(cfg.get("seed", 42)),
             json_repair_attempts=int(cfg.get("json_repair_attempts", 1)),
             plan_repair_attempts=int(cfg.get("plan_repair_attempts", 1)),
+            plan_review_attempts=int(cfg.get("plan_review_attempts", 0)),
         )
     if backend != "heuristic":
         raise ValueError(f"Unsupported planner backend: {backend}")

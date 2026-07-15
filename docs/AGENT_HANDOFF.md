@@ -4,19 +4,15 @@ Last updated: 2026-07-15
 
 ## Current State
 
-The repository is on `main` and the latest pushed commit is:
+The repository is on `main`. Recent important commits before the plan-review work:
 
 ```text
+205f180 Align numeric rewrite validation with rulebook
 36b72b5 Enrich rewrite family planning examples
-```
-
-Previous important commit:
-
-```text
 3b20776 Improve rule-guided rewrite quality gates
 ```
 
-The latest pushed run should be treated as a prompt/rule-example experiment. The current local changes also include verifier/planner alignment fixes based on the 5/10 pilot failure audit.
+The latest completed 10-sample run should be treated as a prompt/rule-example plus verifier-alignment experiment. The current plan-review changes add one reviewer pass before generation.
 
 ## What Changed Recently
 
@@ -30,7 +26,7 @@ The latest pushed run should be treated as a prompt/rule-example experiment. The
   4. `temporal_shift`
   5. `policy_reversal`
 - Expanded `FAMILY_RULES` in `src/generation/prompts.py` with stronger good/bad examples.
-- Bumped prompt version to `planning-guided-v5-rulebook`.
+- Bumped prompt version to `planning-guided-v6-plan-review`.
 
 ### Rewrite Quality Controls
 
@@ -58,19 +54,19 @@ pytest -q
 Result:
 
 ```text
-32 passed
+35 passed
 ```
 
 ## Current Kaggle Experiment
 
-The intended current run is a 10-sample pilot using commit `36b72b5`.
+The intended current run is a 10-sample pilot after committing the plan-review changes.
 
 Correct command:
 
 ```bash
 python scripts/kaggle_run.py pilot \
   --config configs/rewrite_pipeline.yaml \
-  --output-dir data/generated/rewrite_generation_pilot10_rule_examples \
+  --output-dir data/generated/rewrite_generation_pilot10_plan_review \
   --num-samples 10 \
   --seed 42 \
   --log-level INFO
@@ -82,19 +78,19 @@ After the run finishes:
 
 ```bash
 python scripts/kaggle_run.py inspect \
-  --output-dir data/generated/rewrite_generation_pilot10_rule_examples
+  --output-dir data/generated/rewrite_generation_pilot10_plan_review
 ```
 
 ```bash
 python scripts/kaggle_run.py metrics \
-  --output-dir data/generated/rewrite_generation_pilot10_rule_examples \
+  --output-dir data/generated/rewrite_generation_pilot10_plan_review \
   --log logs/rewrite_pilot.log \
   --write
 ```
 
 ```bash
 python scripts/kaggle_run.py failure-audit \
-  --output-dir data/generated/rewrite_generation_pilot10_rule_examples \
+  --output-dir data/generated/rewrite_generation_pilot10_plan_review \
   --write
 ```
 
@@ -108,10 +104,10 @@ Previous baseline output:
 data/generated/rewrite_generation_pilot10_human
 ```
 
-Current output:
+Next plan-review output:
 
 ```text
-data/generated/rewrite_generation_pilot10_rule_examples
+data/generated/rewrite_generation_pilot10_plan_review
 ```
 
 Compare:
@@ -135,7 +131,7 @@ The latest prompt examples should improve plan quality. Expected changes:
 
 Acceptance rate may improve only moderately on 10 samples. If accepted count stays low but failure reasons become cleaner, that is still useful progress.
 
-## Latest 10-Sample Result
+## Latest Completed 10-Sample Result
 
 Output directory:
 
@@ -202,11 +198,16 @@ The following fixes were implemented after the 5/10 pilot result and should be c
   - isolated/truncated `কনসা` is still rejected.
 - Added LLM planner validation repair:
   - if the first JSON plan is syntactically valid but fails validation, Qwen gets one repair prompt with the validation error.
+- Added optional LLM plan review:
+  - a valid plan is reviewed as `pass` or `repair` before generation;
+  - reviewer repairs are validated deterministically before use;
+  - malformed reviewer output falls back to the already-valid plan instead of failing the article.
+  - current configs set `plan_review_attempts: 1`; set it to `0` for faster large runs.
 
 Validation after these local fixes:
 
 ```text
-32 passed
+35 passed
 ```
 
 ## Do Not Change Mid-Run
