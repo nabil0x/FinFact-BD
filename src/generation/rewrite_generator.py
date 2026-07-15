@@ -7,7 +7,14 @@ from typing import List
 from src.generation.metadata import Article, GeneratedRewrite, GenerationParams, RewritePlan
 from src.generation.models import GenerationModel
 from src.generation.prompts import PROMPT_VERSION, build_rewrite_prompt
-from src.generation.utils import artifact_reasons, has_text_artifacts, sentence_spans, span_occurs_as_term
+from src.generation.utils import (
+    artifact_reasons,
+    has_text_artifacts,
+    replace_all_exact,
+    replace_first_exact,
+    sentence_spans,
+    span_occurs_as_term,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +32,16 @@ class RewriteGenerator:
         seed: int,
         attempt: int,
     ) -> GeneratedRewrite:
+        controlled = self._controlled_rewrite(article, plan, temperature, seed, attempt)
+        if controlled is not None:
+            logger.info(
+                "Controlled rewrite for article=%s sentence=%d family=%s attempt=%d",
+                article.article_id,
+                plan.target_claim.sentence_index,
+                plan.family,
+                attempt,
+            )
+            return controlled
         prompt = build_rewrite_prompt(article, plan, attempt)
         outputs = self.model.generate_batch(
             prompts=[prompt],
@@ -57,6 +74,58 @@ class RewriteGenerator:
             ),
         )
 
+    def _controlled_rewrite(
+        self,
+        article: Article,
+        plan: RewritePlan,
+        temperature: float,
+        seed: int,
+        attempt: int,
+    ) -> GeneratedRewrite | None:
+        if plan.family not in {"numerical_fact", "temporal_shift", "entity_replacement"}:
+            return None
+        target_span = plan.target_span.strip()
+        replacement = plan.replacement.strip()
+        if not target_span or not replacement or target_span == replacement:
+            return None
+
+        original_spans = sentence_spans(article.text)
+        target_index = plan.target_claim.sentence_index
+        if target_index >= len(original_spans):
+            raise RuntimeError(f"Target sentence index {target_index} missing from original article")
+        target = original_spans[target_index]
+        if target_span not in target.text:
+            return None
+
+        if plan.family == "entity_replacement":
+            rewritten_article = replace_all_exact(article.text, target_span, replacement)
+            rewritten_headline = replace_all_exact(article.headline, target_span, replacement)
+            quality_text = replace_first_exact(target.text, target_span, replacement)
+        else:
+            rewritten_sentence = replace_first_exact(target.text, target_span, replacement)
+            rewritten_article = article.text[: target.start] + rewritten_sentence + article.text[target.end :]
+            rewritten_headline = replace_first_exact(article.headline, target_span, replacement)
+            quality_text = rewritten_sentence
+
+        if rewritten_article == article.text:
+            return None
+        if has_text_artifacts(quality_text):
+            raise RuntimeError(f"Controlled rewrite contains text artifacts: {artifact_reasons(quality_text)}")
+        return GeneratedRewrite(
+            rewritten_article=rewritten_article,
+            rewritten_headline=rewritten_headline if rewritten_headline != article.headline else None,
+            prompt=f"{PROMPT_VERSION}+controlled-realization:{plan.family}",
+            params=GenerationParams(
+                model_name=f"{self.model.model_name}+controlled-realization",
+                model_revision=self.model.model_revision,
+                prompt_version=f"{PROMPT_VERSION}+controlled-realization",
+                temperature=temperature,
+                seed=seed,
+                attempt=attempt,
+                max_new_tokens=0,
+            ),
+        )
+
     def rewrite_batch(
         self,
         articles: List[Article],
@@ -67,6 +136,17 @@ class RewriteGenerator:
     ) -> List[GeneratedRewrite]:
         if not (len(articles) == len(plans) == len(temperatures) == len(seeds)):
             raise ValueError("Batch inputs must have identical lengths")
+        controlled = [
+            self._controlled_rewrite(article, plan, temperature, seed, attempt)
+            for article, plan, temperature, seed in zip(articles, plans, temperatures, seeds)
+        ]
+        if all(item is not None for item in controlled):
+            return [item for item in controlled if item is not None]
+        if any(item is not None for item in controlled):
+            return [
+                item if item is not None else self.rewrite(article, plan, temperature, seed, attempt)
+                for item, article, plan, temperature, seed in zip(controlled, articles, plans, temperatures, seeds)
+            ]
         prompts = [build_rewrite_prompt(article, plan, attempt) for article, plan in zip(articles, plans)]
         outputs = self.model.generate_batch(prompts, temperatures, seeds, self.max_new_tokens)
         if len(outputs) != len(prompts):

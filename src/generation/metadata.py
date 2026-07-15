@@ -99,6 +99,7 @@ class GeneratedRewrite:
     rewritten_article: str
     prompt: str
     params: GenerationParams
+    rewritten_headline: Optional[str] = None
 
 
 @dataclass(frozen=True)

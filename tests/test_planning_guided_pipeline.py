@@ -21,7 +21,7 @@ class FakeGenerator:
     model_revision = "test"
 
     def generate_batch(self, prompts, temperatures, seeds, max_new_tokens):
-        return ["বাংলাদেশ ব্যাংক নীতিগত সুদের হার ৭ শতাংশ বাড়িয়েছে।" for _ in prompts]
+        return ["বাংলাদেশ ব্যাংক নীতিগত সুদের হার 100 শতাংশ বাড়িয়েছে।" for _ in prompts]
 
 
 class FakeEmbedder:
@@ -249,10 +249,10 @@ def test_llm_planner_parses_structured_json():
         {
           "family": "numerical_fact",
           "target_span": "১০ শতাংশ",
-          "replacement": "৭ শতাংশ",
+          "replacement": "100 শতাংশ",
           "locality": "target_sentence",
-          "edit_instruction": "Change only the selected interest-rate number to ৭ শতাংশ.",
-          "expected_change": "The reported interest rate changes from ১০ শতাংশ to ৭ শতাংশ.",
+          "edit_instruction": "Change only the selected interest-rate number to 100 শতাংশ.",
+          "expected_change": "The reported interest rate changes from ১০ শতাংশ to 100 শতাংশ.",
           "verification_constraints": {"preserve_all_other_sentences": true}
         }
         """
@@ -262,7 +262,7 @@ def test_llm_planner_parses_structured_json():
 
     assert plan.family == "numerical_fact"
     assert plan.target_span == "১০ শতাংশ"
-    assert plan.replacement == "৭ শতাংশ"
+    assert plan.replacement == "100 শতাংশ"
     assert plan.planner_model == "fake-qwen"
 
 
@@ -280,10 +280,10 @@ def test_llm_planner_normalizes_nonlocal_scope():
         {
           "family": "numerical_fact",
           "target_span": "১০ শতাংশ",
-          "replacement": "৭ শতাংশ",
+          "replacement": "100 শতাংশ",
           "locality": "বাংলাদেশ ব্যাংক নীতিগত সুদের হার ১০ শতাংশ বাড়িয়েছে।",
-          "edit_instruction": "Change only the selected interest-rate number to ৭ শতাংশ.",
-          "expected_change": "The reported interest rate changes from ১০ শতাংশ to ৭ শতাংশ.",
+          "edit_instruction": "Change only the selected interest-rate number to 100 শতাংশ.",
+          "expected_change": "The reported interest rate changes from ১০ শতাংশ to 100 শতাংশ.",
           "verification_constraints": {"preserve_all_other_sentences": true}
         }
         """
@@ -335,12 +335,12 @@ def test_rewrite_generator_splices_only_target_sentence():
 
         def generate_batch(self, prompts, temperatures, seeds, max_new_tokens):
             return [
-                "বাংলাদেশ ব্যাংক নীতিগত সুদের হার ৭ শতাংশ বাড়িয়েছে। বাজার অস্থিতিশীল আছে। বিনিয়োগ কমেছে।"
+                "বাংলাদেশ ব্যাংক নীতিগত সুদের হার 100 শতাংশ বাড়িয়েছে। বাজার অস্থিতিশীল আছে। বিনিয়োগ কমেছে।"
             ]
 
     rewritten = RewriteGenerator(DriftGenerator()).rewrite(article, plan, temperature=0.0, seed=1, attempt=1)
 
-    assert rewritten.rewritten_article == "বাংলাদেশ ব্যাংক নীতিগত সুদের হার ৭ শতাংশ বাড়িয়েছে। বাজার স্থিতিশীল আছে। বিনিয়োগ বেড়েছে।"
+    assert rewritten.rewritten_article == "বাংলাদেশ ব্যাংক নীতিগত সুদের হার 100 শতাংশ বাড়িয়েছে। বাজার স্থিতিশীল আছে। বিনিয়োগ বেড়েছে।"
     report = CompositeVerifier([LocalityVerifier()]).verify(article, rewritten.rewritten_article, plan)
     assert report.passed is True
 
@@ -353,7 +353,7 @@ def test_duplicate_verifier_tracks_only_accepted_outputs():
     selected = ClaimRanker(ClaimRankingConfig(min_overall_score=0.1, max_risk_score=1.0)).select(article, claims)
     assert selected is not None
     plan = build_planner().create_plan(selected)
-    rewritten = "বাংলাদেশ ব্যাংক ৭ শতাংশ বলেছে।"
+    rewritten = "বাংলাদেশ ব্যাংক 100 শতাংশ বলেছে।"
 
     first = duplicate.verify(article, rewritten, plan)
     second = duplicate.verify(article, rewritten, plan)
@@ -404,7 +404,7 @@ def test_pipeline_runs_end_to_end_with_injected_models(tmp_path):
 
     assert len(result.samples) == 1
     sample = result.samples[0]
-    assert "৭ শতাংশ" in sample.rewritten_article
+    assert "100 শতাংশ" in sample.rewritten_article
     assert sample.verification_scores["passed"] is True
     assert (override_dir / "finfact_bd_rewritten.csv").exists()
     assert (override_dir / "metadata.json").exists()
@@ -418,7 +418,7 @@ def test_human_validation_workbook_is_claim_first(tmp_path):
         article_id="a1",
         headline="বাংলাদেশ ব্যাংক সুদের হার বাড়িয়েছে",
         original_article="বাংলাদেশ ব্যাংক নীতিগত সুদের হার ১০ শতাংশ বাড়িয়েছে।",
-        rewritten_article="বাংলাদেশ ব্যাংক নীতিগত সুদের হার ৭ শতাংশ বাড়িয়েছে।",
+        rewritten_article="বাংলাদেশ ব্যাংক নীতিগত সুদের হার 100 শতাংশ বাড়িয়েছে।",
         selected_claim={"sentence": "বাংলাদেশ ব্যাংক নীতিগত সুদের হার ১০ শতাংশ বাড়িয়েছে।"},
         claim_index=0,
         claim_type="policy",
@@ -454,5 +454,5 @@ def test_human_validation_workbook_is_claim_first(tmp_path):
         "hallucination_flag",
         "justification",
     ]
-    assert wb["Samples"]["C2"].value == "বাংলাদেশ ব্যাংক নীতিগত সুদের হার ৭ শতাংশ বাড়িয়েছে।"
+    assert wb["Samples"]["C2"].value == "বাংলাদেশ ব্যাংক নীতিগত সুদের হার 100 শতাংশ বাড়িয়েছে।"
     assert wb["Provenance"].sheet_state == "hidden"

@@ -229,7 +229,7 @@ class PlanningGuidedRewritePipeline:
             sample=SampleRecord(
                 sample_id=sample_id,
                 article_id=article.article_id,
-                headline=article.headline,
+                headline=result.generation.rewritten_headline or article.headline,
                 original_article=article.text,
                 rewritten_article=result.generation.rewritten_article,
                 selected_claim=selected.claim.to_dict(),

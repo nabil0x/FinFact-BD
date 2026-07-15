@@ -25,10 +25,10 @@ planner:
   backend: "llm_json"
   allowed_families:
     - numerical_fact
-    - policy_reversal
+    - causal_inversion
     - entity_replacement
     - temporal_shift
-    - causal_inversion
+    - policy_reversal
   max_new_tokens: 384
   temperature: 0.0
   seed: 43

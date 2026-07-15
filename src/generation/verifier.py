@@ -16,6 +16,7 @@ from src.generation.utils import (
     extract_entities,
     extract_numbers,
     sentence_spans,
+    target_sentence,
 )
 from src.generation.verification_rules import intended_change_verdict
 
@@ -55,21 +56,62 @@ class LocalityVerifier:
         changed = changed_sentence_indices(article.text, rewritten)
         target = plan.target_claim.sentence_index
         unexpected = [idx for idx in changed if idx != target]
+        if unexpected and plan.family == "entity_replacement" and self._linked_entity_changes_only(article.text, rewritten, changed, plan):
+            passed = target in changed
+            return VerifierResult(
+                self.name,
+                1.0 if passed else 0.0,
+                passed,
+                "passed" if passed else "target_sentence_unchanged",
+                {"changed_indices": changed, "linked_mentions": unexpected},
+            )
         passed = bool(changed) and not unexpected and target in changed
         score = 1.0 if passed else max(0.0, 1.0 - 0.35 * len(unexpected))
         reason = "passed" if passed else f"unexpected_sentence_changes:{unexpected}"
         return VerifierResult(self.name, round(score, 4), passed, reason, {"changed_indices": changed})
 
+    def _linked_entity_changes_only(self, original: str, rewritten: str, changed: List[int], plan: RewritePlan) -> bool:
+        target_span = plan.target_span.strip()
+        replacement = plan.replacement.strip()
+        if not target_span or not replacement:
+            return False
+        original_spans = sentence_spans(original)
+        rewritten_spans = sentence_spans(rewritten)
+        if len(original_spans) != len(rewritten_spans):
+            return False
+        for idx in changed:
+            expected = original_spans[idx].text.replace(target_span, replacement)
+            if expected != rewritten_spans[idx].text:
+                return False
+        return True
+
 
 @dataclass(frozen=True)
 class TextQualityArtifactVerifier:
     name: str = "text_quality_artifacts"
+    min_length_ratio: float = 0.75
+    max_length_ratio: float = 1.25
 
     def verify(self, article: Article, rewritten: str, plan: RewritePlan) -> VerifierResult:
-        reasons = artifact_reasons(rewritten)
+        original_target = target_sentence(article.text, plan.target_claim.sentence_index)
+        rewritten_target = target_sentence(rewritten, plan.target_claim.sentence_index)
+        reasons = artifact_reasons(rewritten_target or rewritten)
+        if original_target and rewritten_target:
+            ratio = len(rewritten_target) / max(len(original_target), 1)
+            if ratio < self.min_length_ratio or ratio > self.max_length_ratio:
+                reasons.append("target_sentence_length_shift")
+        else:
+            ratio = 0.0
+            reasons.append("target_sentence_missing")
         passed = not reasons
         score = 1.0 if passed else 0.0
-        return VerifierResult(self.name, score, passed, "passed" if passed else ",".join(reasons), {"artifacts": reasons})
+        return VerifierResult(
+            self.name,
+            score,
+            passed,
+            "passed" if passed else ",".join(reasons),
+            {"artifacts": reasons, "target_length_ratio": round(ratio, 4)},
+        )
 
 
 @dataclass
@@ -227,6 +269,9 @@ class HallucinationVerifier:
             key: sorted(rewritten_outside[key] - original_outside[key])
             for key in original_outside
         }
+        if plan.family == "entity_replacement" and plan.replacement:
+            for key in ("entities", "organizations"):
+                new_items[key] = [item for item in new_items[key] if item != plan.replacement]
         flat_new = [item for values in new_items.values() for item in values]
         passed = not flat_new
         score = max(0.0, 1.0 - 0.15 * len(flat_new))

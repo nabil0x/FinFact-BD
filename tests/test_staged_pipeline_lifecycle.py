@@ -48,10 +48,10 @@ class ReleasableInstructionModel:
         {
           "family": "numerical_fact",
           "target_span": "১০ শতাংশ",
-          "replacement": "৭ শতাংশ",
+          "replacement": "100 শতাংশ",
           "locality": "target_sentence",
-          "edit_instruction": "Change only the selected rate from ১০ শতাংশ to ৭ শতাংশ.",
-          "expected_change": "The interest-rate value changes from ১০ শতাংশ to ৭ শতাংশ.",
+          "edit_instruction": "Change only the selected rate from ১০ শতাংশ to 100 শতাংশ.",
+          "expected_change": "The interest-rate value changes from ১০ শতাংশ to 100 শতাংশ.",
           "verification_constraints": {"preserve_all_other_sentences": true}
         }
         """
@@ -68,7 +68,7 @@ class ReleasableGenerator:
         self.release_count = 0
 
     def generate_batch(self, prompts, temperatures, seeds, max_new_tokens):
-        return ["বাংলাদেশ ব্যাংক নীতিগত সুদের হার ৭ শতাংশ বাড়িয়েছে।" for _ in prompts]
+        return ["বাংলাদেশ ব্যাংক নীতিগত সুদের হার 100 শতাংশ বাড়িয়েছে।" for _ in prompts]
 
     def release(self) -> None:
         self.release_count += 1
@@ -188,12 +188,12 @@ def planned_article(article_id="a1"):
     plan = RewritePlan(
         family="numerical_fact",
         target_claim=claim,
-        edit_instruction="Change only the selected rate from ১০ শতাংশ to ৭ শতাংশ.",
+        edit_instruction="Change only the selected rate from ১০ শতাংশ to 100 শতাংশ.",
         edit_scope="target_sentence",
-        expected_change="The interest-rate value changes from ১০ শতাংশ to ৭ শতাংশ.",
+        expected_change="The interest-rate value changes from ১০ শতাংশ to 100 শতাংশ.",
         verification_constraints={"preserve_all_other_sentences": True},
         target_span="১০ শতাংশ",
-        replacement="৭ শতাংশ",
+        replacement="100 শতাংশ",
     )
     return PlannedArticle(article, selected, plan, sample_seed=123)
 
@@ -228,7 +228,7 @@ def test_pipeline_releases_role_models_once_per_staged_run(tmp_path):
     assert 2 in embedder.encode_batch_sizes
     assert nli.batch_calls == 1
     assert fluency.batch_calls == 1
-    assert all("৭ শতাংশ" in sample.rewritten_article for sample in result.samples)
+    assert all("100 শতাংশ" in sample.rewritten_article for sample in result.samples)
     assert (tmp_path / "out" / "planned_articles.jsonl").exists()
     assert "runtime" in result.stats
 

@@ -11,11 +11,19 @@ logger = logging.getLogger(__name__)
 
 
 EDITABILITY_BY_TYPE = {
-    "numerical": 0.90,
-    "policy": 0.86,
-    "entity": 0.72,
-    "temporal": 0.78,
-    "causal": 0.64,
+    "numerical": 0.94,
+    "causal": 0.88,
+    "entity": 0.82,
+    "temporal": 0.76,
+    "policy": 0.72,
+}
+
+PRIORITY_BONUS_BY_TYPE = {
+    "numerical": 0.08,
+    "causal": 0.06,
+    "entity": 0.04,
+    "temporal": 0.02,
+    "policy": 0.0,
 }
 
 
@@ -57,6 +65,7 @@ class ClaimRanker:
             + 0.20 * locality
             + 0.20 * verification
         )
+        overall += PRIORITY_BONUS_BY_TYPE.get(claim.claim_type, 0.0)
         if risk > self.config.max_risk_score:
             overall *= 0.70
         return RankedClaim(

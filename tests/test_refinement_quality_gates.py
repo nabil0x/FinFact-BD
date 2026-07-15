@@ -7,7 +7,8 @@ from src.generation.claim_selection import ClaimRanker, ClaimRankingConfig
 from src.generation.metadata import Article, Claim, RankedClaim, RewritePlan
 from src.generation.perturbation_planner import build_planner
 from src.generation.rewrite_generator import RewriteGenerator
-from src.generation.verifier import CompositeVerifier, IntendedChangeVerifier
+from src.generation.utils import ENTITY_TERMS, entities_are_same_role, extract_entities
+from src.generation.verifier import CompositeVerifier, IntendedChangeVerifier, TextQualityArtifactVerifier
 
 
 class StaticGenerator:
@@ -19,6 +20,14 @@ class StaticGenerator:
 
     def generate_batch(self, prompts, temperatures, seeds, max_new_tokens):
         return [self.output for _ in prompts]
+
+
+class ExplodingGenerator:
+    model_name = "exploding-generator"
+    model_revision = "test"
+
+    def generate_batch(self, prompts, temperatures, seeds, max_new_tokens):
+        raise AssertionError("controlled rewrite should not call the generation model")
 
 
 def numerical_plan(target_span: str = "১শ’টির বেশি", replacement: str = "১০০টির বেশি") -> RewritePlan:
@@ -66,6 +75,12 @@ def test_intended_change_accepts_real_numeric_change():
     rewritten = "বিশ্বের ৯০টির বেশি দেশে ব্যবসা পরিচালনাকারী প্রায় ২০ বিলিয়ন ডলারের কোম্পানি মাহিন্দ্রা।"
     report = CompositeVerifier([IntendedChangeVerifier()]).verify(article, rewritten, numerical_plan(replacement="৯০টির বেশি"))
 
+    rewritten = "বিশ্বের ১০০০টির বেশি দেশে ব্যবসা পরিচালনাকারী প্রায় ২০ বিলিয়ন ডলারের কোম্পানি মাহিন্দ্রা।"
+    report = CompositeVerifier([IntendedChangeVerifier()]).verify(article, rewritten, numerical_plan(replacement="১০۰۰টির বেশি"))
+
+    rewritten = "বিশ্বের 1000টির বেশি দেশে ব্যবসা পরিচালনাকারী প্রায় ২০ বিলিয়ন ডলারের কোম্পানি মাহিন্দ্রা।"
+    report = CompositeVerifier([IntendedChangeVerifier()]).verify(article, rewritten, numerical_plan(replacement="1000টির বেশি"))
+
     assert report.passed is True
 
 
@@ -80,22 +95,191 @@ def test_rewrite_generator_rejects_artifact_output():
     plan = RewritePlan(
         family="numerical_fact",
         target_claim=claim,
-        edit_instruction="Change ১০ শতাংশ to ৭ শতাংশ.",
+        edit_instruction="Change ১০ শতাংশ to 100 শতাংশ.",
         edit_scope="target_sentence",
         expected_change="The rate changes.",
         verification_constraints={},
         target_span="১০ শতাংশ",
-        replacement="৭ শতাংশ",
+        replacement="100 শতাংশ",
+    )
+
+    plan = RewritePlan(
+        family="policy_reversal",
+        target_claim=claim,
+        edit_instruction="Create an artifact output for test.",
+        edit_scope="target_sentence",
+        expected_change="The rate changes.",
+        verification_constraints={},
+        target_span="",
+        replacement="",
     )
 
     with pytest.raises(RuntimeError, match="text artifacts"):
-        RewriteGenerator(StaticGenerator("বাংলাদেশ ব্যাংক নীতিগত সুদের হার ৭ শতাংশ বাড়িয়েছে �")).rewrite(
+        RewriteGenerator(StaticGenerator("বাংলাদেশ ব্যাংক নীতিগত সুদের হার 100 শতাংশ বাড়িয়েছে �")).rewrite(
             article,
             plan,
             temperature=0.0,
             seed=1,
             attempt=1,
         )
+
+
+def test_controlled_numeric_rewrite_uses_exact_scale_replacement_without_model_call():
+    article = Article(
+        article_id="a1",
+        headline="সিটি ব্যাংকের অনুদান",
+        text="সিটি ব্যাংক ডিএমপিকে ৫০ লাখ টাকার অনুদান প্রদান করেছে। বাজার স্থিতিশীল আছে।",
+    )
+    claim = Claim(
+        sentence_index=0,
+        sentence="সিটি ব্যাংক ডিএমপিকে ৫০ লাখ টাকার অনুদান প্রদান করেছে।",
+        claim_type="numerical",
+        entities=["সিটি ব্যাংক"],
+        numbers=["৫০"],
+        policies=[],
+        dates=[],
+        confidence=0.9,
+    )
+    plan = RewritePlan(
+        family="numerical_fact",
+        target_claim=claim,
+        edit_instruction="Inflate the donation amount.",
+        edit_scope="target_sentence",
+        expected_change="The donation amount is much larger.",
+        verification_constraints={},
+        target_span="৫০ লাখ টাকার",
+        replacement="৫ কোটি টাকার",
+    )
+
+    rewritten = RewriteGenerator(ExplodingGenerator()).rewrite(article, plan, temperature=0.4, seed=1, attempt=1)
+    report = CompositeVerifier([IntendedChangeVerifier()]).verify(article, rewritten.rewritten_article, plan)
+
+    assert rewritten.rewritten_article == "সিটি ব্যাংক ডিএমপিকে ৫ কোটি টাকার অনুদান প্রদান করেছে। বাজার স্থিতিশীল আছে।"
+    assert report.passed is True
+
+
+def test_target_artifact_verifier_ignores_unchanged_non_target_artifacts():
+    article = Article(
+        article_id="a1",
+        headline="সিটি ব্যাংকের অনুদান",
+        text="সিটি ব্যাংক ডিএমপিকে ৫০ লাখ টাকার অনুদান প্রদান করেছে। বাজার স্থিতিশীল বাজার স্থিতিশীল আছে।",
+    )
+    claim = Claim(
+        sentence_index=0,
+        sentence="সিটি ব্যাংক ডিএমপিকে ৫০ লাখ টাকার অনুদান প্রদান করেছে।",
+        claim_type="numerical",
+        entities=["সিটি ব্যাংক"],
+        numbers=["৫০"],
+        policies=[],
+        dates=[],
+        confidence=0.9,
+    )
+    plan = RewritePlan(
+        family="numerical_fact",
+        target_claim=claim,
+        edit_instruction="Inflate the donation amount.",
+        edit_scope="target_sentence",
+        expected_change="The donation amount changes.",
+        verification_constraints={},
+        target_span="৫০ লাখ টাকার",
+        replacement="৫ কোটি টাকার",
+    )
+    rewritten = "সিটি ব্যাংক ডিএমপিকে ৫ কোটি টাকার অনুদান প্রদান করেছে। বাজার স্থিতিশীল বাজার স্থিতিশীল আছে।"
+
+    result = TextQualityArtifactVerifier().verify(article, rewritten, plan)
+
+    assert result.passed is True
+
+
+def test_entity_replacement_rejects_same_role_peer():
+    claim = Claim(
+        sentence_index=0,
+        sentence="এডিবি করোনা মোকাবেলায় বাংলাদেশের জন্য ৩ লাখ ডলারের জরুরি সহায়তা অনুমোদন করেছে।",
+        claim_type="entity",
+        entities=["এডিবি"],
+        numbers=["৩"],
+        policies=[],
+        dates=[],
+        confidence=0.9,
+    )
+    article = Article(article_id="a1", headline="এডিবির সহায়তা", text=claim.sentence)
+    plan = RewritePlan(
+        family="entity_replacement",
+        target_claim=claim,
+        edit_instruction="Replace the entity.",
+        edit_scope="target_sentence",
+        expected_change="The aid provider changes.",
+        verification_constraints={},
+        target_span="এডিবি",
+        replacement="বিশ্ব ব্যাংক",
+    )
+    rewritten = "বিশ্ব ব্যাংক করোনা মোকাবেলায় বাংলাদেশের জন্য ৩ লাখ ডলারের জরুরি সহায়তা অনুমোদন করেছে।"
+
+    report = CompositeVerifier([IntendedChangeVerifier()]).verify(article, rewritten, plan)
+
+    assert report.passed is False
+    assert report.reasons == ["entity_same_role_replacement"]
+
+
+def test_causal_inversion_accepts_opposite_effect_not_sentence_flip():
+    claim = Claim(
+        sentence_index=0,
+        sentence="আমদানি ব্যয় বেড়ে যাওয়ার কারণে বৈদেশিক মুদ্রার রিজার্ভে চাপ সৃষ্টি হয়েছে।",
+        claim_type="causal",
+        entities=[],
+        numbers=[],
+        policies=[],
+        dates=[],
+        confidence=0.9,
+    )
+    article = Article(article_id="a1", headline="রিজার্ভে চাপ", text=claim.sentence)
+    plan = RewritePlan(
+        family="causal_inversion",
+        target_claim=claim,
+        edit_instruction="Invert the economic effect.",
+        edit_scope="target_sentence",
+        expected_change="Import cost growth is claimed to increase reserves.",
+        verification_constraints={},
+        target_span="রিজার্ভে চাপ সৃষ্টি হয়েছে",
+        replacement="রিজার্ভ বেড়েছে",
+    )
+    rewritten = "আমদানি ব্যয় বেড়ে যাওয়ার কারণে বৈদেশিক মুদ্রার রিজার্ভ বেড়েছে।"
+
+    report = CompositeVerifier([IntendedChangeVerifier()]).verify(article, rewritten, plan)
+
+    assert report.passed is True
+
+
+def test_expanded_entity_lexicon_covers_dataset_financial_entities():
+    text = (
+        "পূবালী ব্যাংক, বিএসইসি, বিজিএমইএ, এস আলম গ্রুপ, পিকেএসএফ "
+        "এবং চট্টগ্রাম স্টক এক্সচেঞ্জ নতুন সিদ্ধান্ত জানিয়েছে। "
+        "বিআইবিএম, বেক্সিমকো ফার্মা, এশীয় উন্নয়ন ব্যাংক, সাউথ বাংলা ব্যাংক, "
+        "দুর্নীতি দমন কমিশন, বাংলাদেশ পর্যটন করপোরেশন, তিতাস গ্যাস, "
+        "প্রগতি ইন্স্যুরেন্স এবং শিক্ষা মন্ত্রণালয়ও বিবৃতি দিয়েছে।"
+    )
+    entities = set(extract_entities(text))
+
+    assert len(ENTITY_TERMS) >= 300
+    assert {
+        "পূবালী ব্যাংক",
+        "বিএসইসি",
+        "বিজিএমইএ",
+        "এস আলম গ্রুপ",
+        "পিকেএসএফ",
+        "চট্টগ্রাম স্টক এক্সচেঞ্জ",
+        "বিআইবিএম",
+        "বেক্সিমকো ফার্মা",
+        "এশীয় উন্নয়ন ব্যাংক",
+        "সাউথ বাংলা ব্যাংক",
+        "দুর্নীতি দমন কমিশন",
+        "বাংলাদেশ পর্যটন করপোরেশন",
+        "তিতাস গ্যাস",
+        "প্রগতি ইন্স্যুরেন্স",
+        "শিক্ষা মন্ত্রণালয়",
+    } <= entities
+    assert entities_are_same_role("সিটি ব্যাংক", "পূবালী ব্যাংক") is True
+    assert entities_are_same_role("এডিবি", "বিএসইসি") is False
 
 
 def test_llm_planner_rejects_non_term_target_span_inside_word():

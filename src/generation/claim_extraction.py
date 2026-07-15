@@ -15,6 +15,7 @@ from src.generation.utils import (
     extract_entities,
     extract_numbers,
     extract_policies,
+    is_temporal_span,
     sentence_spans,
 )
 
@@ -70,17 +71,24 @@ class HeuristicClaimExtractor:
         policies: List[str],
         dates: List[str],
     ) -> str:
+        if numbers and self._numbers_are_financial(sentence):
+            return "numerical"
         if any(term in sentence for term in CAUSAL_TERMS):
             return "causal"
-        if policies:
-            return "policy"
-        if numbers:
-            return "numerical"
-        if dates:
-            return "temporal"
         if entities:
             return "entity"
+        if dates or is_temporal_span(sentence):
+            return "temporal"
+        if policies:
+            return "policy"
         return "other"
+
+    def _numbers_are_financial(self, sentence: str) -> bool:
+        if not extract_numbers(sentence):
+            return False
+        if is_temporal_span(sentence) and not contains_financial_language(sentence):
+            return False
+        return True
 
     def _confidence(
         self,
@@ -268,16 +276,16 @@ class LLMClaimExtractor:
         policies: List[str],
         dates: List[str],
     ) -> str:
+        if numbers and not (is_temporal_span(sentence) and not contains_financial_language(sentence)):
+            return "numerical"
         if any(term in sentence for term in CAUSAL_TERMS):
             return "causal"
-        if policies:
-            return "policy"
-        if numbers:
-            return "numerical"
-        if dates:
-            return "temporal"
         if entities:
             return "entity"
+        if dates or is_temporal_span(sentence):
+            return "temporal"
+        if policies:
+            return "policy"
         return "entity"
 
     def _list(self, value: Any) -> List[str]:

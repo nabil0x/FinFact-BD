@@ -6,7 +6,7 @@ from src.generation.metadata import Article, RankedClaim, RewritePlan
 from src.generation.utils import context_window
 
 
-PROMPT_VERSION = "planning-guided-v3-sentence-only"
+PROMPT_VERSION = "planning-guided-v4-rulebook"
 
 SYSTEM_INSTRUCTION = (
     "You are one component in a constrained Bangla financial misinformation "
@@ -18,6 +18,31 @@ VARIANT_INSTRUCTIONS = (
     "Keep the same reporting tone, but make the planned factual edit more explicit.",
     "Use concise Bangla news prose and avoid adding any new background information.",
 )
+
+FAMILY_RULES = {
+    "numerical_fact": (
+        "Change a financial number by a meaningful scale, not a small adjustment. "
+        "Skip dates. Preserve units coherently. Examples: ৫০ লাখ -> ৫ কোটি, ১ শতাংশ -> ১০ শতাংশ."
+    ),
+    "entity_replacement": (
+        "Replace the entity with a different-role or wrong-belonging entity, not a same-class peer. "
+        "If linked mentions exist in headline/context, they must remain consistent."
+    ),
+    "temporal_shift": (
+        "Change the time frame so it contradicts the original time claim. "
+        "Use dates, months, years, fiscal years, or reporting periods only."
+    ),
+    "policy_reversal": (
+        "Reverse the policy direction clearly: approval vs rejection, increase vs decrease, "
+        "implementation vs suspension, barrier removed vs barrier increased."
+    ),
+    "causal_inversion": (
+        "Do not merely swap sentence order. Preserve the cause when possible and change the effect "
+        "to an economically opposite or implausible effect."
+    ),
+}
+
+FAMILY_PRIORITY = ["numerical_fact", "causal_inversion", "entity_replacement", "temporal_shift", "policy_reversal"]
 
 CLAIM_EXTRACTION_SCHEMA = {
     "claims": [
@@ -54,6 +79,7 @@ PLANNING_SCHEMA = {
 def build_rewrite_prompt(article: Article, plan: RewritePlan, attempt: int) -> str:
     variant = VARIANT_INSTRUCTIONS[(attempt - 1) % len(VARIANT_INSTRUCTIONS)]
     local_context = context_window(article.text, plan.target_claim.sentence_index, radius=1)
+    family_rule = FAMILY_RULES.get(plan.family, "")
     return (
         f"{SYSTEM_INSTRUCTION}\n\n"
         f"Prompt version: {PROMPT_VERSION}\n"
@@ -63,6 +89,9 @@ def build_rewrite_prompt(article: Article, plan: RewritePlan, attempt: int) -> s
         f"Selected claim:\n{plan.target_claim.sentence}\n\n"
         f"Local context:\n{local_context}\n\n"
         f"Rewrite family: {plan.family}\n"
+        f"Family-specific rule: {family_rule}\n"
+        f"Target span: {plan.target_span}\n"
+        f"Replacement: {plan.replacement}\n"
         f"Edit instruction: {plan.edit_instruction}\n"
         f"Expected change: {plan.expected_change}\n"
         f"Edit scope: {plan.edit_scope}\n\n"
@@ -72,6 +101,8 @@ def build_rewrite_prompt(article: Article, plan: RewritePlan, attempt: int) -> s
         "- Preserve all unrelated facts, entities, dates, numbers, quotes, and attributions.\n"
         "- Do not add background, explanations, or unsupported facts.\n"
         "- Output only one sentence: the rewritten selected claim sentence.\n"
+        "- Keep the rewritten sentence close to the original length.\n"
+        "- If target span and replacement are provided, use the replacement exactly.\n"
         "- Do not output the full article.\n"
         "- Do not output Markdown, labels, analysis, or explanations.\n\n"
         "Rewritten selected sentence:"
@@ -95,11 +126,14 @@ def build_claim_extraction_prompt(article: Article, max_claims: int) -> str:
 
 def build_planning_prompt(ranked_claim: RankedClaim, allowed_families: list[str]) -> str:
     claim = ranked_claim.claim
+    priority = [family for family in FAMILY_PRIORITY if family in allowed_families]
+    rule_text = "\n".join(f"- {family}: {FAMILY_RULES[family]}" for family in allowed_families if family in FAMILY_RULES)
     return (
         "Create a structured rewrite plan for one Bangla financial claim.\n"
         "Do not rewrite the article. Do not invent an article. Decide exactly "
         "what factual property should change and what must remain unchanged.\n"
         f"Allowed families: {', '.join(allowed_families)}\n"
+        f"Preferred family priority: {', '.join(priority)}\n"
         "Return valid JSON only. Do not output Markdown, commentary, or analysis.\n"
         "The response must begin with { and end with }.\n\n"
         "Output constraints:\n"
@@ -109,6 +143,8 @@ def build_planning_prompt(ranked_claim: RankedClaim, allowed_families: list[str]
         "- locality must be exactly \"target_sentence\".\n"
         "- edit_instruction and expected_change must each be one concise sentence.\n"
         "- Do not put the full claim sentence inside locality.\n\n"
+        "Family-specific planning rules:\n"
+        f"{rule_text}\n\n"
         f"Selected claim sentence index: {claim.sentence_index}\n"
         f"Selected claim sentence: {claim.sentence}\n"
         f"Claim type: {claim.claim_type}\n"
