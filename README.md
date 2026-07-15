@@ -99,10 +99,12 @@ methodological constraint, not an implementation detail.
 For Kaggle T4 runs, the two 8B models are configured with lazy loading and the
 pipeline executes them by role. Qwen is loaded once for the extraction/planning
 phase across all pending articles, then released. Aya is loaded once for the
-rewrite/regeneration phase across all planned articles, then released. The
-pipeline should not reload Qwen or Aya per sample. Aya is hosted behind Hugging
-Face access controls; set `HF_TOKEN` in the Kaggle notebook and accept the model
-license before running the production config.
+rewrite/regeneration phase across all planned articles, then released.
+Verifier models are lazy-loaded only when verification starts, scored in
+configurable batches, and explicitly released at the end of generation. The
+pipeline should not reload Qwen, Aya, or verifier models per sample. Aya is
+hosted behind Hugging Face access controls; set `HF_TOKEN` in the Kaggle
+notebook and accept the model license before running the production config.
 
 ## Rewrite Families
 
@@ -128,6 +130,8 @@ details:
 
 Failed generations are never accepted silently. The regeneration controller
 tries up to the configured attempt limit and exports only passing samples.
+Embedding, NLI, fluency, and duplicate checks support batch execution; original
+article embeddings are cached across regeneration attempts.
 
 ## Running
 

@@ -70,22 +70,52 @@ class ReleasableGenerator:
 class StableEmbedder:
     model_name = "fake-e5"
 
+    def __init__(self) -> None:
+        self.release_count = 0
+        self.encode_batch_sizes = []
+
     def encode(self, texts):
+        self.encode_batch_sizes.append(len(texts))
         return [[1.0, float(len(text)), 0.5] for text in texts]
+
+    def release(self) -> None:
+        self.release_count += 1
 
 
 class PassingNLI:
     model_name = "fake-nli"
 
+    def __init__(self) -> None:
+        self.release_count = 0
+        self.batch_calls = 0
+
     def contradiction_score(self, premise: str, hypothesis: str) -> float:
         return 0.9 if premise != hypothesis else 0.0
+
+    def contradiction_scores(self, premises, hypotheses):
+        self.batch_calls += 1
+        return [self.contradiction_score(premise, hypothesis) for premise, hypothesis in zip(premises, hypotheses)]
+
+    def release(self) -> None:
+        self.release_count += 1
 
 
 class PassingFluency:
     model_name = "fake-banglabert"
 
+    def __init__(self) -> None:
+        self.release_count = 0
+        self.batch_calls = 0
+
     def perplexity(self, text: str) -> float:
         return 25.0
+
+    def perplexities(self, texts):
+        self.batch_calls += 1
+        return [self.perplexity(text) for text in texts]
+
+    def release(self) -> None:
+        self.release_count += 1
 
 
 def test_pipeline_releases_role_models_once_per_staged_run(tmp_path):
@@ -104,11 +134,14 @@ def test_pipeline_releases_role_models_once_per_staged_run(tmp_path):
 
     instruction = ReleasableInstructionModel()
     generator = ReleasableGenerator()
+    embedder = StableEmbedder()
+    nli = PassingNLI()
+    fluency = PassingFluency()
     bundle = ModelBundle(
         generator=generator,
-        embedder=StableEmbedder(),
-        nli=PassingNLI(),
-        fluency=PassingFluency(),
+        embedder=embedder,
+        nli=nli,
+        fluency=fluency,
         extractor=instruction,
         planner=instruction,
     )
@@ -135,4 +168,10 @@ def test_pipeline_releases_role_models_once_per_staged_run(tmp_path):
     assert len(result.samples) == 2
     assert instruction.release_count == 1
     assert generator.release_count == 1
+    assert embedder.release_count == 1
+    assert nli.release_count == 1
+    assert fluency.release_count == 1
+    assert 2 in embedder.encode_batch_sizes
+    assert nli.batch_calls == 1
+    assert fluency.batch_calls == 1
     assert all("৭ শতাংশ" in sample.rewritten_article for sample in result.samples)

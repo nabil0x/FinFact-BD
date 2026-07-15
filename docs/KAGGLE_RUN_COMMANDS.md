@@ -110,12 +110,18 @@ The pipeline is staged by model role, not by article:
 
 ```text
 all pending articles -> Qwen extraction/planning -> release Qwen
-all planned articles -> Aya rewrite/regeneration + independent verification -> release Aya
+all planned articles -> Aya rewrite/regeneration
+verification starts -> lazy-load e5/NLI/BanglaBERT -> batched verification
+run complete -> release verifier stack -> release Aya
 ```
 
-For a five-sample smoke or a 20-sample pilot, Qwen and Aya should each load once
-per pipeline run. If logs show Qwen or Aya loading once per article, stop the
-run and update the repository before scaling.
+For a five-sample smoke or a 20-sample pilot, Qwen, Aya, e5, NLI, and BanglaBERT
+should each load once per pipeline run. If logs show any of these models loading
+once per article, stop the run and update the repository before scaling.
+
+Verifier batch size is controlled by `verification.batch_size` in
+`configs/rewrite_pipeline.yaml`. The default is `8`, which is intentionally
+conservative for Kaggle T4 memory.
 
 Resume interrupted full generation:
 

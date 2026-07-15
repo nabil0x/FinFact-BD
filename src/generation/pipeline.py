@@ -13,7 +13,7 @@ from src.generation.exporter import DatasetExporter, HumanValidationWorkbookBuil
 from src.generation.metadata import Article, RankedClaim, RewritePlan, SampleRecord
 from src.generation.models import ModelBundle, build_model_bundle
 from src.generation.perturbation_planner import RewritePlanner, build_planner
-from src.generation.regeneration import RegenerationConfig, RegenerationController
+from src.generation.regeneration import RegenerationConfig, RegenerationController, RegenerationOutcome
 from src.generation.rewrite_generator import RewriteGenerator
 from src.generation.utils import read_json, stable_sample_id, utc_timestamp, write_json
 from src.generation.verifier import CompositeVerifier, build_verifier
@@ -103,18 +103,19 @@ class PlanningGuidedRewritePipeline:
 
         logger.info("Generation phase starting planned=%d", len(planned_articles))
         try:
-            for planned_article in planned_articles:
-                article = planned_article.article
-                if article.article_id in processed:
-                    continue
-                outcome = self._generate_article(planned_article)
-                if outcome.sample is None:
-                    failures.append(outcome.failure or {"article_id": article.article_id, "reason": "unknown_generation_failure"})
-                else:
-                    samples.append(outcome.sample)
-                processed.add(article.article_id)
-                self._save_checkpoint(processed, samples, failures)
+            batch_size = max(1, int(self.config.get("verification", {}).get("batch_size", 8)))
+            for batch in self._chunks(planned_articles, batch_size):
+                active_batch = [planned for planned in batch if planned.article.article_id not in processed]
+                for planned_article, outcome in zip(active_batch, self._generate_article_batch(active_batch)):
+                    article = planned_article.article
+                    if outcome.sample is None:
+                        failures.append(outcome.failure or {"article_id": article.article_id, "reason": "unknown_generation_failure"})
+                    else:
+                        samples.append(outcome.sample)
+                    processed.add(article.article_id)
+                    self._save_checkpoint(processed, samples, failures)
         finally:
+            self._release_verifier_models()
             self._release_model(self.model_bundle.generator)
         logger.info("Generation phase complete accepted=%d failed=%d", len(samples), len(failures))
 
@@ -166,24 +167,39 @@ class PlanningGuidedRewritePipeline:
         return PlannedArticle(article=article, selected=selected, plan=plan, sample_seed=sample_seed)
 
     def _generate_article(self, planned: PlannedArticle) -> ArticleProcessOutcome:
+        return self._generate_article_batch([planned])[0]
+
+    def _generate_article_batch(self, planned_articles: List[PlannedArticle]) -> List[ArticleProcessOutcome]:
+        if not planned_articles:
+            return []
+        try:
+            outcomes = self.components.regenerator.run_batch_with_attempts(
+                [planned.article for planned in planned_articles],
+                [planned.plan for planned in planned_articles],
+                [planned.sample_seed for planned in planned_articles],
+            )
+        except Exception as exc:
+            logger.exception("Generation batch crashed size=%d", len(planned_articles))
+            return [self._generation_exception_outcome(planned, exc) for planned in planned_articles]
+        return [self._outcome_from_regeneration(planned, outcome) for planned, outcome in zip(planned_articles, outcomes)]
+
+    def _generation_exception_outcome(self, planned: PlannedArticle, exc: Exception) -> ArticleProcessOutcome:
+        return ArticleProcessOutcome(
+            failure={
+                "article_id": planned.article.article_id,
+                "reason": "exception",
+                "stage": "generation",
+                "error": str(exc),
+                "selected_claim": planned.selected.claim.to_dict(),
+                "rewrite_plan": planned.plan.to_dict(),
+            }
+        )
+
+    def _outcome_from_regeneration(self, planned: PlannedArticle, outcome: RegenerationOutcome) -> ArticleProcessOutcome:
         article = planned.article
         selected = planned.selected
         plan = planned.plan
         sample_seed = planned.sample_seed
-        try:
-            outcome = self.components.regenerator.run_with_attempts(article, plan, sample_seed)
-        except Exception as exc:
-            logger.exception("Article generation crashed: %s", article.article_id)
-            return ArticleProcessOutcome(
-                failure={
-                    "article_id": article.article_id,
-                    "reason": "exception",
-                    "stage": "generation",
-                    "error": str(exc),
-                    "selected_claim": selected.claim.to_dict(),
-                    "rewrite_plan": plan.to_dict(),
-                }
-            )
         if outcome.result is None:
             return ArticleProcessOutcome(
                 failure={
@@ -219,6 +235,9 @@ class PlanningGuidedRewritePipeline:
                 timestamp=utc_timestamp(),
             )
         )
+
+    def _chunks(self, planned_articles: List[PlannedArticle], size: int) -> List[List[PlannedArticle]]:
+        return [planned_articles[index : index + size] for index in range(0, len(planned_articles), size)]
 
     def _load_articles(self, path: Path, num_samples: Optional[int]) -> List[Article]:
         if not path.exists():
@@ -257,6 +276,13 @@ class PlanningGuidedRewritePipeline:
         seen: set[int] = set()
         for model in (self.model_bundle.extractor, self.model_bundle.planner):
             if model is not None and id(model) not in seen:
+                seen.add(id(model))
+                self._release_model(model)
+
+    def _release_verifier_models(self) -> None:
+        seen: set[int] = set()
+        for model in (self.model_bundle.embedder, self.model_bundle.nli, self.model_bundle.fluency):
+            if id(model) not in seen:
                 seen.add(id(model))
                 self._release_model(model)
 

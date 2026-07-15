@@ -48,6 +48,7 @@ regeneration:
   temperature_step: 0.15
 
 verification:
+  batch_size: 8
   semantic_similarity_min: 0.74
   contradiction_min: 0.55
   fluency_max_perplexity: 220.0

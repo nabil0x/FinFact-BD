@@ -313,6 +313,8 @@ class ElectraDiscriminatorQualityModel:
 
 
 def build_model_bundle(config: Dict[str, object]) -> ModelBundle:
+    from src.generation.lazy_verifier_models import LazyEmbeddingModel, LazyFluencyModel, LazyNLIModel
+
     device = str(config.get("device", "cuda"))
     generator_cfg = dict(config["generator"])  # type: ignore[index]
     embedding_cfg = dict(config["embedding"])  # type: ignore[index]
@@ -322,17 +324,9 @@ def build_model_bundle(config: Dict[str, object]) -> ModelBundle:
     extractor = _build_optional_instruction_model(dict(config.get("extractor", {})), device, {})
     shared = {"extractor": extractor}
     planner = _build_optional_instruction_model(dict(config.get("planner", {})), device, shared)
-    embedder = SentenceTransformersEmbeddingModel(
-        str(embedding_cfg["model_name"]),
-        device=device,
-        prefix=str(embedding_cfg.get("prefix", "")),
-    )
-    nli = TransformersNLIModel(
-        str(nli_cfg["model_name"]),
-        revision=str(nli_cfg.get("revision", "main")),
-        device=device,
-    )
-    fluency = _build_fluency_model(fluency_cfg, device)
+    embedder = LazyEmbeddingModel(embedding_cfg, device)
+    nli = LazyNLIModel(nli_cfg, device)
+    fluency = LazyFluencyModel(fluency_cfg, device)
     return ModelBundle(
         generator=generator,
         embedder=embedder,
