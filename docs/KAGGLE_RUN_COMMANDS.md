@@ -188,11 +188,36 @@ python scripts/kaggle_run.py smoke --num-samples 2
 python scripts/kaggle_run.py pilot --num-samples 50
 python scripts/kaggle_run.py full --clean
 python scripts/kaggle_run.py smoke --config configs/rewrite_pipeline_llm_extraction.yaml
+python scripts/kaggle_run.py pilot --planner-preset qwen25-3b --num-samples 10 --output-dir data/generated/rewrite_generation_pilot10_qwen25_3b
+python scripts/kaggle_run.py pilot --planner-preset qwen3-8b --num-samples 10 --output-dir data/generated/rewrite_generation_pilot10_qwen3_8b
 python scripts/kaggle_run.py inspect --output-dir data/generated/rewrite_generation_smoke --skip-workbook
 python scripts/kaggle_run.py preflight --stage metadata
 python scripts/kaggle_run.py preflight --stage download
 python scripts/kaggle_run.py preflight --stage load
 ```
+
+Model switches:
+
+```bash
+# Swap only the planner to the smaller Qwen2.5 model.
+python scripts/kaggle_run.py pilot --planner-preset qwen25-3b --num-samples 10 --output-dir data/generated/rewrite_generation_pilot10_qwen25_3b
+
+# Override specific model roles directly from the cell.
+python scripts/kaggle_run.py pilot \
+  --planner-model Qwen/Qwen2.5-3B-Instruct \
+  --generator-model CohereLabs/aya-expanse-8b \
+  --nli-model MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7 \
+  --fluency-model csebuetnlp/banglabert \
+  --num-samples 10 \
+  --output-dir data/generated/rewrite_generation_pilot10_custom_models
+
+# Enable the LLM extractor if you want to compare it against the heuristic extractor.
+python scripts/kaggle_run.py preflight --stage load --extractor-enabled --extractor-model Qwen/Qwen2.5-3B-Instruct
+```
+
+The same model override flags are accepted by `preflight` and `all-smoke`, so
+you can validate a smaller planner or alternate verifier stack before running a
+pilot.
 
 By default, Xet is disabled for preflight and pipeline runs because Kaggle/HF
 downloads can otherwise appear stalled. Pass `--enable-xet` to use Xet.

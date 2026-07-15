@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -9,7 +10,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from kaggle_output_inspector import inspect_output
 from kaggle_failure_audit import audit_failures
@@ -27,6 +28,36 @@ OUTPUT_DIRS = {
 }
 
 logger = logging.getLogger(__name__)
+
+PLANNER_PRESETS = {
+    "qwen3-8b": {
+        "model_name": "Qwen/Qwen3-8B",
+        "revision": "main",
+        "load_in_4bit": True,
+        "use_chat_template": True,
+        "chat_template_kwargs": {"enable_thinking": False},
+    },
+    "qwen25-3b": {
+        "model_name": "Qwen/Qwen2.5-3B-Instruct",
+        "revision": "main",
+        "load_in_4bit": True,
+        "use_chat_template": True,
+        "chat_template_kwargs": {},
+    },
+}
+
+
+def _any_non_none(*values: object) -> bool:
+    return any(value is not None for value in values)
+
+
+def _apply_updates(target: dict[str, Any], **updates: Any) -> bool:
+    changed = False
+    for key, value in updates.items():
+        if value is not None:
+            target[key] = value
+            changed = True
+    return changed
 
 
 def project_root() -> Path:
@@ -133,6 +164,181 @@ def validate_config(path: str) -> None:
     logger.info("Config OK: %s", path)
 
 
+def add_model_override_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--planner-preset", choices=sorted(PLANNER_PRESETS))
+    parser.add_argument("--planner-model")
+    parser.add_argument("--planner-revision")
+    parser.add_argument("--planner-load-in-4bit", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--planner-use-chat-template", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--extractor-enabled", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--extractor-model")
+    parser.add_argument("--extractor-revision")
+    parser.add_argument("--extractor-load-in-4bit", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--extractor-use-chat-template", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--generator-model")
+    parser.add_argument("--generator-revision")
+    parser.add_argument("--generator-load-in-4bit", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--generator-use-chat-template", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--embedding-model")
+    parser.add_argument("--embedding-prefix")
+    parser.add_argument("--nli-model")
+    parser.add_argument("--nli-revision")
+    parser.add_argument("--fluency-model")
+    parser.add_argument("--fluency-revision")
+    parser.add_argument("--fluency-backend")
+    parser.add_argument("--plan-repair-attempts", type=int)
+    parser.add_argument("--plan-review-attempts", type=int)
+
+
+def resolved_pipeline_config(args: argparse.Namespace, mode: str, output_dir: Path) -> str:
+    planner_preset = getattr(args, "planner_preset", None)
+    planner_model = getattr(args, "planner_model", None)
+    planner_revision = getattr(args, "planner_revision", None)
+    planner_load_in_4bit = getattr(args, "planner_load_in_4bit", None)
+    planner_use_chat_template = getattr(args, "planner_use_chat_template", None)
+    extractor_enabled = getattr(args, "extractor_enabled", None)
+    extractor_model = getattr(args, "extractor_model", None)
+    extractor_revision = getattr(args, "extractor_revision", None)
+    extractor_load_in_4bit = getattr(args, "extractor_load_in_4bit", None)
+    extractor_use_chat_template = getattr(args, "extractor_use_chat_template", None)
+    generator_model = getattr(args, "generator_model", None)
+    generator_revision = getattr(args, "generator_revision", None)
+    generator_load_in_4bit = getattr(args, "generator_load_in_4bit", None)
+    generator_use_chat_template = getattr(args, "generator_use_chat_template", None)
+    embedding_model = getattr(args, "embedding_model", None)
+    embedding_prefix = getattr(args, "embedding_prefix", None)
+    nli_model = getattr(args, "nli_model", None)
+    nli_revision = getattr(args, "nli_revision", None)
+    fluency_model = getattr(args, "fluency_model", None)
+    fluency_revision = getattr(args, "fluency_revision", None)
+    fluency_backend = getattr(args, "fluency_backend", None)
+    plan_repair_attempts = getattr(args, "plan_repair_attempts", None)
+    plan_review_attempts = getattr(args, "plan_review_attempts", None)
+    if not _any_non_none(
+        planner_preset,
+        planner_model,
+        planner_revision,
+        planner_load_in_4bit,
+        planner_use_chat_template,
+        extractor_enabled,
+        extractor_model,
+        extractor_revision,
+        extractor_load_in_4bit,
+        extractor_use_chat_template,
+        generator_model,
+        generator_revision,
+        generator_load_in_4bit,
+        generator_use_chat_template,
+        embedding_model,
+        embedding_prefix,
+        nli_model,
+        nli_revision,
+        fluency_model,
+        fluency_revision,
+        fluency_backend,
+        plan_repair_attempts,
+        plan_review_attempts,
+    ):
+        return args.config
+
+    import yaml
+
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = project_root() / config_path
+    config: dict[str, Any] = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    models = config.setdefault("models", {})
+    changed_roles: list[str] = []
+
+    planner_model_config = models.setdefault("planner", {})
+    planner_touched = False
+    if planner_preset:
+        planner_model_config.update(PLANNER_PRESETS[planner_preset])
+        planner_touched = True
+    planner_touched |= _apply_updates(
+        planner_model_config,
+        model_name=planner_model,
+        revision=planner_revision,
+        load_in_4bit=planner_load_in_4bit,
+        use_chat_template=planner_use_chat_template,
+    )
+    if planner_touched:
+        changed_roles.append(f"planner={planner_model_config.get('model_name')}")
+
+    extractor_model_config = models.setdefault("extractor", {})
+    extractor_touched = False
+    if extractor_enabled is not None:
+        extractor_model_config["enabled"] = extractor_enabled
+        extractor_touched = True
+    if _any_non_none(extractor_model, extractor_revision, extractor_load_in_4bit, extractor_use_chat_template):
+        if extractor_enabled is None:
+            extractor_model_config["enabled"] = True
+        extractor_touched |= _apply_updates(
+            extractor_model_config,
+            model_name=extractor_model,
+            revision=extractor_revision,
+            load_in_4bit=extractor_load_in_4bit,
+            use_chat_template=extractor_use_chat_template,
+        )
+    if extractor_touched:
+        changed_roles.append(f"extractor={extractor_model_config.get('model_name', 'heuristic')}")
+
+    generator_model_config = models.setdefault("generator", {})
+    if _apply_updates(
+        generator_model_config,
+        model_name=generator_model,
+        revision=generator_revision,
+        load_in_4bit=generator_load_in_4bit,
+        use_chat_template=generator_use_chat_template,
+    ):
+        changed_roles.append(f"generator={generator_model_config.get('model_name')}")
+
+    embedding_model_config = models.setdefault("embedding", {})
+    if _apply_updates(embedding_model_config, model_name=embedding_model, prefix=embedding_prefix):
+        changed_roles.append(f"embedding={embedding_model_config.get('model_name')}")
+
+    nli_model_config = models.setdefault("nli", {})
+    if _apply_updates(nli_model_config, model_name=nli_model, revision=nli_revision):
+        changed_roles.append(f"nli={nli_model_config.get('model_name')}")
+
+    fluency_model_config = models.setdefault("fluency", {})
+    if _apply_updates(
+        fluency_model_config,
+        model_name=fluency_model,
+        revision=fluency_revision,
+        backend=fluency_backend,
+    ):
+        changed_roles.append(f"fluency={fluency_model_config.get('model_name')}")
+
+    planner_config = config.setdefault("planner", {})
+    planner_rules_touched = False
+    if plan_repair_attempts is not None:
+        planner_config["plan_repair_attempts"] = plan_repair_attempts
+        planner_rules_touched = True
+    if plan_review_attempts is not None:
+        planner_config["plan_review_attempts"] = plan_review_attempts
+        planner_rules_touched = True
+    if planner_rules_touched:
+        changed_roles.append(
+            "planner_rules="
+            f"{planner_config.get('plan_repair_attempts')}/{planner_config.get('plan_review_attempts')}"
+        )
+
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    safe_mode = mode.replace("/", "_")
+    safe_output = output_dir.name or "output"
+    resolved_text = yaml.safe_dump(config, allow_unicode=True, sort_keys=False)
+    resolved_hash = hashlib.sha1(resolved_text.encode("utf-8")).hexdigest()[:8]
+    resolved_path = LOG_DIR / f"resolved_{safe_mode}_{safe_output}_{resolved_hash}_config.yaml"
+    resolved_path.write_text(resolved_text, encoding="utf-8")
+    logger.info(
+        "Using resolved config %s overrides=%s",
+        resolved_path,
+        ", ".join(changed_roles) if changed_roles else "none",
+    )
+    return str(resolved_path)
+
+
 def gpu(_: argparse.Namespace) -> None:
     run_command(["nvidia-smi"], LOG_DIR / "nvidia_smi.log")
     run_command(
@@ -148,9 +354,10 @@ def gpu(_: argparse.Namespace) -> None:
 
 def preflight(args: argparse.Namespace) -> None:
     configure_runtime(disable_xet=not args.enable_xet)
+    config_path = resolved_pipeline_config(args, "preflight", Path("preflight"))
     stages = ["metadata", "download", "load"] if args.stage == "all" else [args.stage]
     for stage in stages:
-        cmd = python_cmd("scripts/kaggle_preflight.py", "--config", args.config, "--log-level", args.log_level)
+        cmd = python_cmd("scripts/kaggle_preflight.py", "--config", config_path, "--log-level", args.log_level)
         if stage == "download":
             cmd.append("--download")
         if stage == "load":
@@ -165,10 +372,11 @@ def pipeline(args: argparse.Namespace, mode: str) -> None:
     output_dir = Path(args.output_dir or OUTPUT_DIRS[mode])
     if args.clean:
         shutil.rmtree(output_dir, ignore_errors=True)
+    config_path = resolved_pipeline_config(args, mode, output_dir)
     cmd = python_cmd(
         "scripts/run_rewrite_pipeline.py",
         "--config",
-        args.config,
+        config_path,
         "--input",
         args.input,
         "--output-dir",
@@ -229,27 +437,18 @@ def all_smoke(args: argparse.Namespace) -> None:
     if not args.skip_setup:
         setup(argparse.Namespace(no_pull=args.no_pull, no_pip_upgrade=args.no_pip_upgrade))
     check(args)
-    preflight(
-        argparse.Namespace(
-            stage="all",
-            config=args.config,
-            enable_xet=args.enable_xet,
-            log_level=args.log_level,
-        )
+    preflight_kwargs = dict(vars(args))
+    preflight_kwargs["stage"] = "all"
+    preflight(argparse.Namespace(**preflight_kwargs))
+    smoke_kwargs = dict(vars(args))
+    smoke_kwargs.update(
+        {
+            "output_dir": OUTPUT_DIRS["smoke"],
+            "clean": True,
+            "append_log": False,
+        }
     )
-    smoke(
-        argparse.Namespace(
-            config=args.config,
-            input=args.input,
-            output_dir=OUTPUT_DIRS["smoke"],
-            num_samples=args.num_samples,
-            seed=args.seed,
-            clean=True,
-            append_log=False,
-            enable_xet=args.enable_xet,
-            log_level=args.log_level,
-        )
-    )
+    smoke(argparse.Namespace(**smoke_kwargs))
     inspect(argparse.Namespace(output_dir=OUTPUT_DIRS["smoke"], preview=3, fast=True, skip_workbook=False))
 
 
@@ -263,6 +462,7 @@ def add_pipeline_args(parser: argparse.ArgumentParser, default_output: str, defa
     parser.add_argument("--append-log", action="store_true")
     parser.add_argument("--enable-xet", action="store_true")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    add_model_override_args(parser)
 
 
 def parse_args() -> argparse.Namespace:
@@ -285,6 +485,7 @@ def parse_args() -> argparse.Namespace:
     preflight_parser.add_argument("--config", default=DEFAULT_CONFIG)
     preflight_parser.add_argument("--enable-xet", action="store_true")
     preflight_parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    add_model_override_args(preflight_parser)
     preflight_parser.set_defaults(func=preflight)
 
     smoke_parser = sub.add_parser("smoke", help="Run clean five-sample smoke generation.")
@@ -336,6 +537,7 @@ def parse_args() -> argparse.Namespace:
     all_parser.add_argument("--seed", type=int, default=42)
     all_parser.add_argument("--enable-xet", action="store_true")
     all_parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    add_model_override_args(all_parser)
     all_parser.set_defaults(func=all_smoke)
 
     return parser.parse_args()
