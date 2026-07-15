@@ -191,7 +191,17 @@ class PlanningGuidedRewritePipeline:
                 continue
             validation_failure = self._validate_plan_executable(article, plan)
             if validation_failure is not None:
-                last_error = validation_failure.failure.get("reason", "validation_failed") if validation_failure.failure else "validation_failed"
+                vf_reason = validation_failure.failure.get("reason", "validation_failed") if validation_failure.failure else "validation_failed"
+                last_error = vf_reason
+                logger.warning(
+                    "Plan executable validation failed for %s candidate=%d/%d claim_type=%s reason=%s target_span=%r",
+                    article.article_id,
+                    candidate_idx + 1,
+                    len(ranked),
+                    selected.claim.claim_type,
+                    vf_reason,
+                    plan.target_span[:80],
+                )
                 continue
             sample_seed = self.rng.randint(0, 2**31 - 1)
             return PlannedArticle(article=article, selected=selected, plan=plan, sample_seed=sample_seed)

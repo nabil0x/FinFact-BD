@@ -565,7 +565,7 @@ def replace_all_exact(text: str, target: str, replacement: str) -> str:
 
 def artifact_reasons(text: str) -> List[str]:
     reasons: List[str] = []
-    suspicious_fragments = ("প্রব্যঙ্গ", "নির্নয়ন", "ন঵", "অনুষ্")
+    suspicious_fragments = ("প্রব্যঙ্গ", "নির্নয়ন", "ন঵")
     if "\ufffd" in text or "�" in text:
         reasons.append("replacement_character")
     if re.search(r"[\u0980-\u09FF]{1,2}্(?:\s|$)", text):

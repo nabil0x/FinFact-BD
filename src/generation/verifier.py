@@ -103,7 +103,11 @@ class TextQualityArtifactVerifier:
         reasons = artifact_reasons(rewritten_target or rewritten)
         if original_target and rewritten_target:
             ratio = len(rewritten_target) / max(len(original_target), 1)
-            if ratio < self.min_length_ratio or ratio > self.max_length_ratio:
+            # Causal inversion structurally reorders the sentence, which naturally
+            # produces a different length than the original. Skip the length-shift
+            # check for this family to avoid false positives.
+            check_length = plan.family != "causal_inversion"
+            if check_length and (ratio < self.min_length_ratio or ratio > self.max_length_ratio):
                 reasons.append("target_sentence_length_shift")
         else:
             ratio = 0.0
