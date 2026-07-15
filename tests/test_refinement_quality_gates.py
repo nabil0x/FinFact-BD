@@ -324,6 +324,40 @@ def test_numeric_contradiction_verifier_accepts_strong_scale_rule_when_nli_is_lo
     assert result.details["rule"] == "deterministic_numeric_scale_contradiction"
 
 
+def test_temporal_contradiction_verifier_accepts_strong_time_shift_when_nli_is_low():
+    article = Article(
+        article_id="a1",
+        headline="গার্মেন্টস খাতে পরিবর্তন",
+        text="তৈরি পোশাক খাতের প্রায় ২০ কারখানা বন্ধ হয়েছে চলতি জুলাই মাসে।",
+    )
+    claim = Claim(
+        sentence_index=0,
+        sentence="তৈরি পোশাক খাতের প্রায় ২০ কারখানা বন্ধ হয়েছে চলতি জুলাই মাসে।",
+        claim_type="temporal",
+        entities=[],
+        numbers=[],
+        policies=[],
+        dates=["জুলাই"],
+        confidence=0.9,
+    )
+    plan = RewritePlan(
+        family="temporal_shift",
+        target_claim=claim,
+        edit_instruction="Shift the reporting period.",
+        edit_scope="target_sentence",
+        expected_change="The time anchor changes.",
+        verification_constraints={},
+        target_span="চলতি জুলাই মাসে",
+        replacement="গত ডিসেম্বর মাসে",
+    )
+    rewritten = "তৈরি পোশাক খাতের প্রায় ২০ কারখানা বন্ধ হয়েছে গত ডিসেম্বর মাসে।"
+
+    result = ContradictionVerifier(LowContradictionNLI()).verify(article, rewritten, plan)
+
+    assert result.passed is True
+    assert result.details["rule"] == "deterministic_temporal_shift_contradiction"
+
+
 def test_target_artifact_verifier_ignores_unchanged_non_target_artifacts():
     article = Article(
         article_id="a1",

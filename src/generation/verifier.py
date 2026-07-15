@@ -16,6 +16,7 @@ from src.generation.utils import (
     extract_entities,
     extract_numbers,
     numeric_unit_mismatch_reason,
+    is_temporal_span,
     significant_count_change,
     sentence_spans,
     significant_numeric_scale_change,
@@ -185,6 +186,12 @@ class ContradictionVerifier:
                 rewritten_spans[idx].text,
                 plan,
             )
+            if deterministic is None:
+                deterministic = self._deterministic_temporal_contradiction(
+                    original_spans[idx].text,
+                    rewritten_spans[idx].text,
+                    plan,
+                )
             deterministic_results[batch_idx] = deterministic
             valid_indices.append(batch_idx)
             premises.append(original_spans[idx].text)
@@ -247,6 +254,40 @@ class ContradictionVerifier:
             True,
             "passed",
             {"rule": "deterministic_numeric_scale_contradiction"},
+        )
+
+    def _deterministic_temporal_contradiction(
+        self,
+        premise: str,
+        hypothesis: str,
+        plan: RewritePlan,
+    ) -> VerifierResult | None:
+        if plan.family != "temporal_shift":
+            return None
+        target_span = plan.target_span.strip()
+        replacement = plan.replacement.strip()
+        if not target_span or not replacement:
+            return None
+        if not is_temporal_span(target_span) or not is_temporal_span(replacement):
+            return None
+        if replacement not in hypothesis and not span_occurs_as_term(hypothesis, replacement):
+            return None
+        if target_span in hypothesis or span_occurs_as_term(hypothesis, target_span):
+            return None
+        original_dates = sorted(set(extract_dates(premise)))
+        rewritten_dates = sorted(set(extract_dates(hypothesis)))
+        return VerifierResult(
+            self.name,
+            1.0,
+            True,
+            "passed",
+            {
+                "rule": "deterministic_temporal_shift_contradiction",
+                "original_temporal_terms": original_dates,
+                "rewritten_temporal_terms": rewritten_dates,
+                "target_span": target_span,
+                "replacement": replacement,
+            },
         )
 
 
