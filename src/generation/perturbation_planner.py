@@ -7,7 +7,13 @@ from typing import Any, Dict, List, Protocol
 from src.generation.metadata import RankedClaim, RewritePlan
 from src.generation.models import InstructionModel
 from src.generation.prompts import PLANNING_SCHEMA, build_json_repair_prompt, build_planning_prompt
-from src.generation.utils import extract_json_payload
+from src.generation.utils import (
+    CAUSAL_TERMS,
+    extract_json_payload,
+    numeric_values,
+    numeric_values_equivalent,
+    span_occurs_as_term,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +70,7 @@ class PerturbationPlanner:
             verification_constraints=constraints,
             target_span=self._target_span(family, ranked_claim),
         )
+        validate_rewrite_plan(plan)
         logger.info("Planned %s rewrite for sentence %d", family, claim.sentence_index)
         return plan
 
@@ -139,6 +146,7 @@ class LLMPerturbationPlanner:
         )
         if not plan.edit_instruction or not plan.expected_change or not plan.target_span:
             raise ValueError("Planner JSON must include edit_instruction, expected_change, and target_span")
+        validate_rewrite_plan(plan)
         logger.info("LLM planned %s rewrite for sentence %d", family, ranked_claim.claim.sentence_index)
         return plan
 
@@ -228,3 +236,27 @@ def build_planner(
     if backend != "heuristic":
         raise ValueError(f"Unsupported planner backend: {backend}")
     return PerturbationPlanner(families)
+
+
+def validate_rewrite_plan(plan: RewritePlan) -> None:
+    claim = plan.target_claim
+    if plan.target_span and not span_occurs_as_term(claim.sentence, plan.target_span):
+        raise ValueError(f"Planner target_span is not an exact claim term: {plan.target_span!r}")
+    if plan.replacement and plan.target_span and plan.replacement.strip() == plan.target_span.strip():
+        raise ValueError("Planner replacement must differ from target_span")
+    if plan.family == "numerical_fact":
+        if not numeric_values(claim.sentence):
+            raise ValueError("Numerical plan requires a numeric target claim")
+        if plan.replacement and not numeric_values(plan.replacement):
+            raise ValueError("Numerical plan replacement must contain a numeric value")
+        if plan.replacement and numeric_values_equivalent(plan.target_span, plan.replacement):
+            raise ValueError("Numerical plan replacement is value-equivalent to target_span")
+    if plan.family == "policy_reversal":
+        if not (claim.policies or any(term in claim.sentence for term in ("বৃদ্ধি", "হ্রাস", "কম", "বাড়", "প্রয়োজন", "বাধা"))):
+            raise ValueError("Policy reversal requires a policy or directional claim")
+    if plan.family == "entity_replacement" and not claim.entities:
+        raise ValueError("Entity replacement requires at least one extracted entity")
+    if plan.family == "temporal_shift" and not (claim.dates or numeric_values(claim.sentence)):
+        raise ValueError("Temporal shift requires a date or time-like numeric anchor")
+    if plan.family == "causal_inversion" and not any(term in claim.sentence for term in CAUSAL_TERMS):
+        raise ValueError("Causal inversion requires a causal claim")

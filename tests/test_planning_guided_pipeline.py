@@ -439,6 +439,20 @@ def test_human_validation_workbook_is_claim_first(tmp_path):
     from openpyxl import load_workbook
 
     wb = load_workbook(output)
-    assert wb.sheetnames == ["Instructions", "Samples", "Full Articles"]
+    assert wb.sheetnames == ["Instructions", "Samples", "Full Articles", "Provenance"]
     headers = [cell.value for cell in wb["Samples"][1]]
-    assert headers == ["sample_id", "headline", "claim_focus", "context_window", "label", "confidence", "justification"]
+    assert headers == [
+        "sample_id",
+        "headline",
+        "claim_focus",
+        "context_window",
+        "label",
+        "confidence",
+        "plausibility_1_to_5",
+        "fluency_style_1_to_5",
+        "context_preserved",
+        "hallucination_flag",
+        "justification",
+    ]
+    assert wb["Samples"]["C2"].value == "বাংলাদেশ ব্যাংক নীতিগত সুদের হার ৭ শতাংশ বাড়িয়েছে।"
+    assert wb["Provenance"].sheet_state == "hidden"

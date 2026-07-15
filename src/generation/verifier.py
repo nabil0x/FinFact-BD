@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Protocol
 from src.generation.metadata import Article, RewritePlan, VerificationReport, VerifierResult
 from src.generation.models import EmbeddingModel, FluencyModel, NLIModel
 from src.generation.utils import (
+    artifact_reasons,
     changed_sentence_indices,
     cosine,
     extract_dates,
@@ -16,6 +17,7 @@ from src.generation.utils import (
     extract_numbers,
     sentence_spans,
 )
+from src.generation.verification_rules import intended_change_verdict
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +39,12 @@ class IntendedChangeVerifier:
         idx = plan.target_claim.sentence_index
         if idx >= len(original_spans) or idx >= len(rewritten_spans):
             return VerifierResult(self.name, 0.0, False, "target_sentence_missing")
-        changed = original_spans[idx].text.strip() != rewritten_spans[idx].text.strip()
-        score = 1.0 if changed else 0.0
-        return VerifierResult(self.name, score, changed, "passed" if changed else "target_unchanged")
+        score, passed, reason, details = intended_change_verdict(
+            original_spans[idx].text.strip(),
+            rewritten_spans[idx].text.strip(),
+            plan,
+        )
+        return VerifierResult(self.name, score, passed, reason, details)
 
 
 @dataclass(frozen=True)
@@ -54,6 +59,17 @@ class LocalityVerifier:
         score = 1.0 if passed else max(0.0, 1.0 - 0.35 * len(unexpected))
         reason = "passed" if passed else f"unexpected_sentence_changes:{unexpected}"
         return VerifierResult(self.name, round(score, 4), passed, reason, {"changed_indices": changed})
+
+
+@dataclass(frozen=True)
+class TextQualityArtifactVerifier:
+    name: str = "text_quality_artifacts"
+
+    def verify(self, article: Article, rewritten: str, plan: RewritePlan) -> VerifierResult:
+        reasons = artifact_reasons(rewritten)
+        passed = not reasons
+        score = 1.0 if passed else 0.0
+        return VerifierResult(self.name, score, passed, "passed" if passed else ",".join(reasons), {"artifacts": reasons})
 
 
 @dataclass
@@ -327,6 +343,7 @@ def build_verifier(models: object, config: Dict[str, object] | None = None) -> C
         [
             IntendedChangeVerifier(),
             LocalityVerifier(),
+            TextQualityArtifactVerifier(),
             SemanticSimilarityVerifier(
                 embedder=models.embedder,
                 min_score=float(cfg.get("semantic_similarity_min", 0.74)),

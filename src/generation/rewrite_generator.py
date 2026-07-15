@@ -7,7 +7,7 @@ from typing import List
 from src.generation.metadata import Article, GeneratedRewrite, GenerationParams, RewritePlan
 from src.generation.models import GenerationModel
 from src.generation.prompts import PROMPT_VERSION, build_rewrite_prompt
-from src.generation.utils import sentence_spans
+from src.generation.utils import artifact_reasons, has_text_artifacts, sentence_spans, span_occurs_as_term
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class RewriteGenerator:
         )
         if len(outputs) != 1:
             raise RuntimeError(f"Generation model returned {len(outputs)} outputs for one prompt")
-        rewritten_article = self._localize_output(article.text, outputs[0], plan.target_claim.sentence_index)
+        rewritten_article = self._localize_output(article.text, outputs[0], plan)
         if not rewritten_article:
             raise RuntimeError("Generation model returned an empty rewrite")
         logger.info(
@@ -73,7 +73,7 @@ class RewriteGenerator:
             raise RuntimeError(f"Generation model returned {len(outputs)} outputs for {len(prompts)} prompts")
         return [
             GeneratedRewrite(
-                rewritten_article=self._localize_output(article.text, output, plan.target_claim.sentence_index),
+                rewritten_article=self._localize_output(article.text, output, plan),
                 prompt=prompt,
                 params=GenerationParams(
                     model_name=self.model.model_name,
@@ -103,23 +103,47 @@ class RewriteGenerator:
         ):
             if text.startswith(prefix):
                 text = text[len(prefix) :].strip()
+        text = text.strip(" \n\t\"'“”‘’")
         return text
 
-    def _localize_output(self, original_article: str, output: str, target_index: int) -> str:
+    def _localize_output(self, original_article: str, output: str, plan: RewritePlan) -> str:
+        if has_text_artifacts(output):
+            raise RuntimeError(f"Generation output contains text artifacts: {artifact_reasons(output)}")
         cleaned = self._clean_output(output)
         original_spans = sentence_spans(original_article)
+        target_index = plan.target_claim.sentence_index
         if target_index >= len(original_spans):
             raise RuntimeError(f"Target sentence index {target_index} missing from original article")
 
-        generated_spans = sentence_spans(cleaned)
-        if len(generated_spans) > target_index:
-            rewritten_sentence = generated_spans[target_index].text.strip()
-        elif len(generated_spans) == 1:
-            rewritten_sentence = generated_spans[0].text.strip()
-        else:
-            rewritten_sentence = cleaned.strip()
+        rewritten_sentence = self._select_target_sentence(cleaned, plan)
         if not rewritten_sentence:
             raise RuntimeError("Generation model returned an empty target sentence")
+        if has_text_artifacts(rewritten_sentence):
+            raise RuntimeError(f"Localized sentence contains text artifacts: {artifact_reasons(rewritten_sentence)}")
 
         target = original_spans[target_index]
+        rewritten_sentence = self._ensure_sentence_terminator(rewritten_sentence, target.text)
         return original_article[: target.start] + rewritten_sentence + original_article[target.end :]
+
+    def _select_target_sentence(self, cleaned: str, plan: RewritePlan) -> str:
+        generated_spans = sentence_spans(cleaned)
+        if not generated_spans:
+            return cleaned.strip()
+        if len(generated_spans) == 1:
+            return generated_spans[0].text.strip()
+        replacement = plan.replacement.strip()
+        if replacement:
+            matches = [span.text.strip() for span in generated_spans if replacement in span.text or span_occurs_as_term(span.text, replacement)]
+            if len(matches) == 1:
+                return matches[0]
+            raise RuntimeError("Generation output contains multiple sentences and no unique planned replacement sentence")
+        return generated_spans[0].text.strip()
+
+    def _ensure_sentence_terminator(self, rewritten_sentence: str, original_sentence: str) -> str:
+        sentence = rewritten_sentence.strip()
+        if sentence.endswith(("।", "!", "?")):
+            return sentence
+        original = original_sentence.strip()
+        if original.endswith(("।", "!", "?")):
+            return sentence + original[-1]
+        return sentence

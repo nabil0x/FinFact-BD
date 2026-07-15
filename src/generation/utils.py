@@ -13,6 +13,8 @@ from src.generation.metadata import SentenceSpan
 
 SENTENCE_RE = re.compile(r"[^।!?]+(?:[।!?]+|$)")
 NUMBER_RE = re.compile(r"[০-৯0-9]+(?:[.,][০-৯0-9]+)?%?")
+NUMERIC_TOKEN_RE = re.compile(r"([০-৯0-9]+(?:[.,][۰-۹0-9]+)?)(?:\s*(?:শ|শত|শতাংশ|%))?")
+NUMERIC_TOKEN_RE = re.compile(r"([0-9\u09e6-\u09ef]+(?:[.,][0-9\u09e6-\u09ef]+)?)(?:\s*(?:শ|শত|শতাংশ|%))?")
 DATE_RE = re.compile(
     r"(?:19\d{2}|20\d{2}|[০-৯]{4}|"
     r"জানুয়ারি|ফেব্রুয়ারি|মার্চ|এপ্রিল|মে|জুন|জুলাই|আগস্ট|"
@@ -58,6 +60,32 @@ def extract_numbers(text: str) -> List[str]:
     return [match.group() for match in NUMBER_RE.finditer(text)]
 
 
+def normalize_digits(text: str) -> str:
+    table = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
+    return text.translate(table)
+
+
+def numeric_values(text: str) -> List[float]:
+    values: List[float] = []
+    for match in NUMERIC_TOKEN_RE.finditer(text):
+        raw = normalize_digits(match.group(1)).replace(",", ".")
+        try:
+            value = float(raw)
+        except ValueError:
+            continue
+        suffix = match.group(0)
+        if "শতাংশ" not in suffix and "%" not in suffix and re.search(r"শ(?:[’'\u2019]|\s|টি|টার|$)", suffix):
+            value *= 100
+        values.append(value)
+    return values
+
+
+def numeric_values_equivalent(left: str, right: str) -> bool:
+    left_values = numeric_values(left)
+    right_values = numeric_values(right)
+    return bool(left_values and right_values and left_values == right_values)
+
+
 def extract_dates(text: str) -> List[str]:
     return [match.group() for match in DATE_RE.finditer(text)]
 
@@ -65,6 +93,15 @@ def extract_dates(text: str) -> List[str]:
 def extract_terms(text: str, terms: Iterable[str]) -> List[str]:
     found = [term for term in terms if term and term in text]
     return sorted(set(found), key=lambda value: (text.find(value), value))
+
+
+def span_occurs_as_term(text: str, span: str) -> bool:
+    span = span.strip()
+    if not span:
+        return False
+    escaped = re.escape(span)
+    pattern = rf"(?<![\u0980-\u09FF0-9\u09e6-\u09ef]){escaped}(?![\u0980-\u09FF0-9\u09e6-\u09ef])"
+    return re.search(pattern, text) is not None or span in text.split()
 
 
 def extract_entities(text: str) -> List[str]:
@@ -92,6 +129,21 @@ def changed_sentence_indices(original: str, rewritten: str) -> List[int]:
         if original_text.strip() != rewritten_text.strip():
             changed.append(idx)
     return changed
+
+
+def artifact_reasons(text: str) -> List[str]:
+    reasons: List[str] = []
+    if "\ufffd" in text or "�" in text:
+        reasons.append("replacement_character")
+    if re.search(r"[\u0980-\u09FF]{1,2}্(?:\s|$)", text):
+        reasons.append("dangling_halant_fragment")
+    if re.search(r"([\u0980-\u09FF]{3,}(?:\s+[\u0980-\u09FF]{3,}){0,2})\s+\1", text):
+        reasons.append("repeated_bangla_fragment")
+    return reasons
+
+
+def has_text_artifacts(text: str) -> bool:
+    return bool(artifact_reasons(text))
 
 
 def context_window(text: str, sentence_index: int, radius: int = 1) -> str:
