@@ -30,6 +30,7 @@ Secret automatically.
 | `scripts/kaggle_pilot.sh` | Run clean 100-sample pilot generation |
 | `scripts/kaggle_stress1k.sh` | Run clean 1k stress generation |
 | `scripts/kaggle_metrics.sh` | Summarize throughput, retry, memory, and verifier timing metrics |
+| `scripts/kaggle_failure_audit.sh` | Inspect failed attempts, verifier reasons, scores, and target sentence rewrites |
 | `scripts/kaggle_full.sh` | Run full generation; does not clean by default |
 | `scripts/kaggle_resume.sh` | Resume full generation from checkpoint |
 | `scripts/kaggle_inspect.sh` | Inspect exported dataset/checkpoint/workbook |
@@ -90,6 +91,8 @@ If smoke passes, run pilot:
 ```bash
 scripts/kaggle_pilot20.sh
 scripts/kaggle_inspect.sh --output-dir data/generated/rewrite_generation_pilot20 --fast
+scripts/kaggle_metrics.sh --output-dir data/generated/rewrite_generation_pilot20 --log logs/rewrite_pilot.log --write
+scripts/kaggle_failure_audit.sh --output-dir data/generated/rewrite_generation_pilot20 --write
 ```
 
 If the 20-sample pilot passes, run the larger pilot:
@@ -174,6 +177,7 @@ python scripts/kaggle_run.py full
 python scripts/kaggle_run.py resume
 python scripts/kaggle_run.py inspect --output-dir data/generated/rewrite_generation_smoke
 python scripts/kaggle_run.py metrics --output-dir data/generated/rewrite_generation_stress1k --log logs/rewrite_stress1k.log --write
+python scripts/kaggle_run.py failure-audit --output-dir data/generated/rewrite_generation_pilot20 --write
 python scripts/kaggle_run.py inspect --output-dir data/generated/rewrite_generation_smoke --fast
 ```
 

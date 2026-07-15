@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from kaggle_output_inspector import inspect_output
+from kaggle_failure_audit import audit_failures
 from kaggle_metrics import summarize_metrics
 
 DEFAULT_CONFIG = "configs/rewrite_pipeline.yaml"
@@ -216,6 +217,14 @@ def metrics(args: argparse.Namespace) -> None:
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
+def failure_audit(args: argparse.Namespace) -> None:
+    summary = audit_failures(Path(args.output_dir), args.preview)
+    if args.write:
+        path = Path(args.output_dir) / "failure_audit.json"
+        path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+
+
 def all_smoke(args: argparse.Namespace) -> None:
     if not args.skip_setup:
         setup(argparse.Namespace(no_pull=args.no_pull, no_pip_upgrade=args.no_pip_upgrade))
@@ -310,6 +319,12 @@ def parse_args() -> argparse.Namespace:
     metrics_parser.add_argument("--log")
     metrics_parser.add_argument("--write", action="store_true")
     metrics_parser.set_defaults(func=metrics)
+
+    audit_parser = sub.add_parser("failure-audit", help="Audit failed rewrite attempts and verifier scores.")
+    audit_parser.add_argument("--output-dir", default=OUTPUT_DIRS["smoke"])
+    audit_parser.add_argument("--preview", type=int, default=10)
+    audit_parser.add_argument("--write", action="store_true")
+    audit_parser.set_defaults(func=failure_audit)
 
     all_parser = sub.add_parser("all-smoke", help="Setup, test, preflight, smoke, and inspect.")
     all_parser.add_argument("--skip-setup", action="store_true")
