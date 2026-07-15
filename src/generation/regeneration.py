@@ -25,6 +25,16 @@ class RegenerationOutcome:
     attempts: List[AttemptRecord]
 
 
+MAX_TEMPERATURE = 0.85
+DETERMINISTIC_VERIFIER_NAMES = frozenset({
+    "intended_change",
+    "locality",
+    "text_quality_artifacts",
+    "journalistic_style",
+    "hallucination",
+})
+
+
 @dataclass(frozen=True)
 class RegenerationConfig:
     max_attempts: int = 3
@@ -58,7 +68,42 @@ class RegenerationController:
         for attempt in range(1, self.config.max_attempts + 1):
             if not pending:
                 break
-            temperature = self.config.base_temperature + self.config.temperature_step * (attempt - 1)
+            raw_temp = self.config.base_temperature + self.config.temperature_step * (attempt - 1)
+            temperature = min(raw_temp, MAX_TEMPERATURE)
+            if temperature != raw_temp:
+                logger.debug(
+                    "Temperature capped from %.4f to %.4f for attempt %d",
+                    raw_temp,
+                    temperature,
+                    attempt,
+                )
+            prev_failure_reasons: List[str] = []
+            for idx in pending:
+                prev_attempts = attempts_by_index[idx]
+                if prev_attempts:
+                    prev = prev_attempts[-1]
+                    if prev.verification:
+                        prev_failure_reasons.extend(prev.verification.get("reasons", []))
+
+            if attempt > 1:
+                det_fail = any(
+                    any(r.startswith(pre) for pre in ("intended_change", "locality", "text_quality", "journalistic_style", "hallucination", "new_facts"))
+                    for r in prev_failure_reasons
+                )
+                nondet_fail = any(
+                    any(r.startswith(pre) for pre in ("embedding", "nli", "perplexity", "duplicate"))
+                    for r in prev_failure_reasons
+                )
+                if det_fail and not nondet_fail:
+                    prev_temp_raw = self.config.base_temperature + self.config.temperature_step * (attempt - 2)
+                    reverted_temp = min(prev_temp_raw, MAX_TEMPERATURE)
+                    logger.debug(
+                        "Deterministic-only failure; resetting temperature from %.4f to %.4f",
+                        temperature,
+                        reverted_temp,
+                    )
+                    temperature = reverted_temp
+
             generated: List[tuple[int, GeneratedRewrite]] = []
             for idx in pending:
                 try:
