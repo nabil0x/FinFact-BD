@@ -28,6 +28,7 @@ def main() -> None:
     parser.add_argument("--input", default=None)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--num-samples", type=int, default=None)
+    parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args()
@@ -48,7 +49,7 @@ def main() -> None:
     from src.generation.pipeline import PlanningGuidedRewritePipeline
 
     pipeline = PlanningGuidedRewritePipeline(config)
-    result = pipeline.run(input_csv=args.input, output_dir=args.output_dir, num_samples=args.num_samples)
+    result = pipeline.run(input_csv=args.input, output_dir=args.output_dir, num_samples=args.num_samples, offset=args.offset)
     logging.getLogger(__name__).info(
         "Finished accepted=%d failed=%d output=%s",
         len(result.samples),

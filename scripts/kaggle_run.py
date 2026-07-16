@@ -388,6 +388,8 @@ def pipeline(args: argparse.Namespace, mode: str) -> None:
     )
     if args.num_samples is not None:
         cmd.extend(["--num-samples", str(args.num_samples)])
+    if args.offset:
+        cmd.extend(["--offset", str(args.offset)])
     run_command(cmd, LOG_DIR / f"rewrite_{mode}.log", append=args.append_log)
 
 
@@ -457,6 +459,7 @@ def add_pipeline_args(parser: argparse.ArgumentParser, default_output: str, defa
     parser.add_argument("--input", default=DEFAULT_INPUT)
     parser.add_argument("--output-dir", default=default_output)
     parser.add_argument("--num-samples", type=int, default=default_samples)
+    parser.add_argument("--offset", type=int, default=0, help="Skip N articles from the start of the dataset (for batch processing)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--clean", action="store_true")
     parser.add_argument("--append-log", action="store_true")
@@ -534,6 +537,7 @@ def parse_args() -> argparse.Namespace:
     all_parser.add_argument("--config", default=DEFAULT_CONFIG)
     all_parser.add_argument("--input", default=DEFAULT_INPUT)
     all_parser.add_argument("--num-samples", type=int, default=5)
+    all_parser.add_argument("--offset", type=int, default=0, help="Skip N articles from the start (for batch processing)")
     all_parser.add_argument("--seed", type=int, default=42)
     all_parser.add_argument("--enable-xet", action="store_true")
     all_parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])

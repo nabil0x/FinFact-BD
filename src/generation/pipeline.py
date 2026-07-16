@@ -62,13 +62,13 @@ class PlanningGuidedRewritePipeline:
         self.model_bundle = model_bundle or build_model_bundle(config["models"])
         self.components = components or self._build_components(self.model_bundle)
 
-    def run(self, input_csv: Optional[str] = None, output_dir: Optional[str] = None, num_samples: Optional[int] = None) -> PipelineRunResult:
+    def run(self, input_csv: Optional[str] = None, output_dir: Optional[str] = None, num_samples: Optional[int] = None, offset: int = 0) -> PipelineRunResult:
         input_path = Path(input_csv or self.paths.get("input_csv", ""))
         out_dir = Path(output_dir or self.paths.get("output_dir", "data/generated/rewrite_generation"))
         self.checkpoint_path = self._checkpoint_for_run(out_dir, output_dir is not None)
         self.planning_checkpoint_path = out_dir / "planned_articles.jsonl"
         logger.info("Using output_dir=%s checkpoint=%s", out_dir, self.checkpoint_path)
-        articles = self._load_articles(input_path, num_samples)
+        articles = self._load_articles(input_path, num_samples, offset)
         checkpoint = self._load_checkpoint()
         samples = [SampleRecord(**row) for row in checkpoint.get("samples", [])]
         failures = list(checkpoint.get("failures", []))
@@ -362,7 +362,7 @@ class PlanningGuidedRewritePipeline:
     def _chunks(self, planned_articles: List[PlannedArticle], size: int) -> List[List[PlannedArticle]]:
         return [planned_articles[index : index + size] for index in range(0, len(planned_articles), size)]
 
-    def _load_articles(self, path: Path, num_samples: Optional[int]) -> List[Article]:
+    def _load_articles(self, path: Path, num_samples: Optional[int], offset: int = 0) -> List[Article]:
         if not path.exists():
             raise FileNotFoundError(f"Input CSV not found: {path}")
         text_col = self.input_cfg.get("text_column", "text")
@@ -371,7 +371,9 @@ class PlanningGuidedRewritePipeline:
         articles: List[Article] = []
         with open(path, "r", encoding="utf-8", newline="") as handle:
             reader = csv.DictReader(handle)
-            for row in reader:
+            for row_index, row in enumerate(reader):
+                if row_index < offset:
+                    continue
                 text = (row.get(text_col) or "").strip()
                 if not text:
                     continue
@@ -386,7 +388,7 @@ class PlanningGuidedRewritePipeline:
                 )
                 if num_samples is not None and len(articles) >= num_samples:
                     break
-        logger.info("Loaded %d articles from %s", len(articles), path)
+        logger.info("Loaded %d articles (offset=%d) from %s", len(articles), offset, path)
         return articles
 
     def _checkpoint_for_run(self, out_dir: Path, output_dir_overridden: bool) -> Path:
