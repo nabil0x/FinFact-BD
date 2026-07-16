@@ -185,6 +185,10 @@ scripts/kaggle_check.sh
 For Kaggle setup, preflight, smoke, pilot, full-run, resume, and inspection scripts, see
 `docs/KAGGLE_RUN_COMMANDS.md`.
 
+For a detailed walkthrough of how a single article moves through extraction, ranking,
+planning, generation, verification, regeneration, and export, see
+`docs/PIPELINE_ITEM_PROCESSING.md`.
+
 For the dataset-driven configuration analysis, see
 `docs/DATASET_CONFIG_ANALYSIS.md`.
 
